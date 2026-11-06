@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isMember(cid) {
+      return signedIn() && request.auth.uid in get(/databases/$(database)/documents/casas/$(cid)).data.membros;
+    }
+
+    // Cada pessoa só vê o próprio cadastro (em qual casa ela está).
+    match /usuarios/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Códigos de convite: quem está na casa cria; quem tem o código consegue ler só aquele.
+    match /convites/{code} {
+      allow get: if signedIn();
+      allow create: if isMember(request.resource.data.casa) && request.resource.data.expira is timestamp;
+      allow delete: if isMember(resource.data.casa);
+    }
+
+    match /casas/{cid} {
+      function joiningWithInvite() {
+        let conv = get(/databases/$(database)/documents/convites/$(request.resource.data.convite));
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['membros', 'nomes', 'convite'])
+          && request.resource.data.membros.toSet().difference(resource.data.membros.toSet()) == [request.auth.uid].toSet()
+          && request.resource.data.membros.size() == resource.data.membros.size() + 1
+          && request.resource.data.nomes.diff(resource.data.nomes).affectedKeys().hasOnly([request.auth.uid])
+          && conv.data.casa == cid
+          && conv.data.expira > request.time;
+      }
+
+      allow read: if signedIn() && request.auth.uid in resource.data.membros;
+      allow create: if signedIn() && request.resource.data.membros == [request.auth.uid];
+      allow update: if signedIn() && (request.auth.uid in resource.data.membros || joiningWithInvite());
+
+      // Lançamentos, contas, cartões etc.: só quem está na casa.
+      match /{colecao}/{resto=**} {
+        allow read, write: if isMember(cid);
+      }
+    }
+  }
+}
