@@ -680,11 +680,13 @@ function drop(id,msg){
   const old=S.recs[id];if(!old)return;delete S.recs[id];rebuild();if(msg)toast(msg);
   if(S.mode==='local')saveLocal();else if(S.mode==='db'&&DB.db){delete DB.pw[id];DB.pd[id]=1;dbDel(recPath(old)).finally(()=>{delete DB.pd[id]})}
 }
-async function putMany(list){
+let SAVING=0;
+const progToast=(d,t)=>{if(d===1||d%10===0||d===t)toast(`Salvando no banco… ${d} de ${t}. Não feche o app.`)};
+async function putMany(list,onProg){
   list=list.map(stamp);for(const r of list)S.recs[r.id]=r;rebuild();
   if(S.mode==='local'){saveLocal();return}
   if(S.mode!=='db'||!DB.db)return;
-  const q=list.slice();const worker=async()=>{while(q.length){const r=q.shift(),p=recPath(r);ensureSub(subKey(p));DB.pw[r.id]=r;await dbSet(p,body(r));if(DB.pw[r.id]===r)delete DB.pw[r.id]}};
+  const q=list.slice();let done=0;SAVING+=list.length;const worker=async()=>{while(q.length){const r=q.shift(),p=recPath(r);ensureSub(subKey(p));DB.pw[r.id]=r;try{await dbSet(p,body(r))}finally{SAVING--}if(DB.pw[r.id]===r)delete DB.pw[r.id];done++;onProg&&onProg(done,list.length)}};
   await Promise.all([worker(),worker(),worker(),worker()]);
 }
 function saveLocal(){if(!lsSet(LS2,{v:2,recs:Object.values(S.recs)}))toast('Este navegador não deixou salvar. Baixe um backup em Ajustes.')}
@@ -882,7 +884,7 @@ function vGate(){
   }
   return '';
 }
-function startWith(list){S.recs={};S.mode=DB.db?'db':'local';S.month=curYM();putMany(list).then(()=>{if(DB.db)subscribeAll()})}
+function startWith(list,prog){S.recs={};S.mode=DB.db?'db':'local';S.month=curYM();return putMany(list,prog?progToast:null).then(()=>{if(DB.db)subscribeAll()})}
 
 /* ---------- interface ---------- */
 let toastT;
@@ -1748,13 +1750,15 @@ $('#fileIn').addEventListener('change',async e=>{const f=e.target.files[0];e.tar
   try{const j=JSON.parse(await f.text());let recs=null;
     if(j&&Array.isArray(j.recs))recs=j.recs.filter(r=>r&&r.id&&r.t);else if(j&&Array.isArray(j.accounts))recs=v1ToRecs(j);
     if(!recs||!recs.length)throw 0;
-    if(S.mode==='demo'){startWith(recs);toast('Backup restaurado.')}else{S.pendingRestore=recs;S.tab='ajustes';render()}
+    if(S.mode==='demo'){await startWith(recs,true);toast(DB.db?'Backup restaurado. Tudo salvo no banco da casa.':'Backup restaurado.')}else{S.pendingRestore=recs;S.tab='ajustes';render()}
   }catch(_){toast('Esse arquivo não é um backup do Caixa em Dia.')}});
 async function deleteAllDb(){const paths=Object.values(S.recs).map(recPath);await Promise.all(paths.map(p=>dbDel(p)))}
 async function replaceAll(recs){
   if(!guard())return;
   if(S.mode==='db'&&DB.db){S.wiping=true;try{await deleteAllDb()}finally{S.wiping=false}}
-  S.recs={};await putMany(recs);toast('Backup restaurado.');
+  S.recs={};await putMany(recs,progToast);
+  if(DB.db){for(const f of Object.values(DB.unsubs))try{f()}catch(e){}DB.unsubs={};DB.subs={};subscribeAll()}
+  toast('Backup restaurado. Tudo salvo no banco da casa.');
 }
 async function backup(){if(!S.downloads)return;try{await S.downloads.save({filename:`caixa-em-dia-backup-${today()}.json`,data:JSON.stringify({v:2,recs:Object.values(S.recs)},null,1)});toast('Backup baixado.')}catch(e){if(e&&e.code!=='declined')toast('Não foi possível baixar agora.')}}
 async function csv(){if(!S.downloads)return;const L=filteredLines();const q=v=>`"${String(v??'').replace(/"/g,'""')}"`;
@@ -1767,6 +1771,7 @@ async function wipe(){
   if(S.mode==='db'&&DB.db){S.wiping=true;try{await deleteAllDb()}catch(e){S.wiping=false;toast('Não consegui apagar tudo. Tente de novo.');return}}
   lsDel(LS1);lsDel(LS2);S.mode='demo';S.tab='mes';setRecs(demoRecs());S.wiping=false;toast('Tudo apagado.');
 }
+window.addEventListener('beforeunload',e=>{if(SAVING>0){e.preventDefault();e.returnValue='Ainda estou salvando seus dados. Se sair agora, parte deles pode se perder.'}});
 window.addEventListener('resize',()=>{clearTimeout(window._rz);window._rz=setTimeout(()=>{if(S.tab==='mes')drawFlow();if(S.tab==='rel')drawEvo()},150)});
 
 /* ---------- início ---------- */
