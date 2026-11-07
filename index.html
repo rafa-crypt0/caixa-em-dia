@@ -763,12 +763,19 @@ async function onUser(u){
   const seq=++userSeq;stopAll();S.fb=u;
   if(!u){if(S.me)S.authMode='login';S.me=null;S.phase='login';render();return}
   S.me=u.uid;S.uname=u.displayName||S.uname||'';S.phase='loading';render();
-  let cid=null;
+  let cid=null,err=null;
   try{const d=await FB.fs.doc('usuarios/'+u.uid).get();if(d.exists){const b=d.data();cid=b.casa||null;if(b.nome)S.uname=b.nome}}
-  catch(e){cid=lsGet(LSC(u.uid))}
+  catch(e){err=e;cid=lsGet(LSC(u.uid))}
   if(seq!==userSeq)return;
   if(cid&&await enterCasa(cid,seq))return;
+  /* cadastro faltando ou ilegível: procura a casa em que a pessoa é membro e conserta o cadastro */
+  try{const q=await FB.fs.collection('casas').where('membros','array-contains',u.uid).limit(1).get();
+    if(seq!==userSeq)return;
+    if(!q.empty){const id=q.docs[0].id;FB.fs.doc('usuarios/'+u.uid).set({casa:id,nome:S.uname||u.displayName||''}).catch(()=>{});if(await enterCasa(id,seq))return}
+    else err=null;
+  }catch(e){err=err||e}
   if(seq!==userSeq)return;
+  if(err&&!/permission/.test(err.code||'')){S.gateErr=authMsg(err);S.phase='retry';render();return}
   S.phase='casa';render();
 }
 async function enterCasa(cid,seq){
@@ -855,6 +862,7 @@ function vGate(){
   const box=(inner)=>`<div class="gate">${inner}</div>`;
   if(S.phase==='offline')return box(`<div class="panel"><h2>Sem internet</h2><p style="margin:0">Na primeira vez o app precisa de internet para carregar. Depois ele abre mesmo sem conexão.</p><div><button class="btn primary" data-act="reload">Tentar de novo</button></div></div>`);
   if(S.phase==='config')return box(`<div class="panel"><h2>Falta ligar ao Firebase</h2><p style="margin:0">Preencha o arquivo <b>config.js</b> com os dados do seu projeto no Firebase (passo 4 do LEIAME) e envie de novo para o GitHub.</p></div>`);
+  if(S.phase==='retry')return box(`<div class="panel"><h2>Não consegui abrir a sua casa</h2><p style="margin:0">${esc(S.gateErr||'')} Seus dados continuam guardados. Confira a internet e tente de novo.</p><div class="btnrow"><button class="btn primary" data-act="reload">Tentar de novo</button><button class="btn" data-act="logout">Sair</button></div></div>`);
   if(S.phase==='loading')return box(`<div class="panel"><p style="margin:0" class="muted">Carregando…</p></div>`);
   if(S.phase==='login'){
     const m=S.authMode,inv=new URLSearchParams(location.search).get('c');
@@ -889,7 +897,8 @@ function startWith(list,prog){S.recs={};S.mode=DB.db?'db':'local';S.month=curYM(
 /* ---------- interface ---------- */
 let toastT;
 function toast(t){const el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,3600)}
-const TABS=[['resumo','Resumo'],['mes','Mês'],['lanc','Lançamentos'],['rel','Relatórios'],['rec','Fixos e entradas'],['parc','Parcelas e empréstimos'],['contas','Contas'],['inv','Investimentos'],['geral','Geral'],['red','Reduções'],['ajustes','Ajustes']];
+const TABS=[['resumo','Resumo'],['mes','Mês'],['lanc','Lançamentos'],['rel','Relatórios'],['mais','Controles'],['contas','Contas'],['red','Reduções'],['ajustes','Ajustes']];
+const SUBS=[['rec','Fixos e entradas'],['parc','Parcelas e empréstimos'],['inv','Investimentos'],['geral','Visão geral dos meses']];
 function renderTabs(){$('#tabs').innerHTML=TABS.map(([k,l])=>`<button role="tab" aria-selected="${S.tab===k}" data-act="tab" data-tab="${k}">${l}</button>`).join('')}
 function cutTag(c){return c?`<span class="tag cut-${c}">${CUTS[c].l}</span>`:''}
 function instTag(l){if(!l.inst)return'';const f=l.inst.tot-l.inst.n;return `<span class="tag ${f===0?'last':''}">${l.inst.n}/${l.inst.tot} · ${f===0?'última':f===1?'falta 1':'faltam '+f}</span>`}
@@ -914,7 +923,7 @@ function render(){
   if(!inApp){$('#fab').hidden=true;$('#main').innerHTML=vGate();return}
   setSave();renderTabs();
   $('#curMonth').textContent=ymL(S.month).replace('/',' ');
-  const v={resumo:vResumo,rel:vRel,mes:vMes,lanc:vLanc,rec:vRec,parc:vParc,contas:vContas,inv:vInv,geral:vGeral,red:vRed,ajustes:vAjustes}[S.tab]||vMes;
+  const v={resumo:vResumo,rel:vRel,mais:vMais,mes:vMes,lanc:vLanc,rec:vRec,parc:vParc,contas:vContas,inv:vInv,geral:vGeral,red:vRed,ajustes:vAjustes}[S.tab]||vMes;
   $('#main').innerHTML=`<div class="stack">${topBanner()}${v()}</div>`;
   if(S.tab==='mes')drawFlow();
   if(S.tab==='rel')drawEvo();
@@ -1140,6 +1149,12 @@ function quickMore(){
 }
 document.addEventListener('pointerover',e=>{const sg=e.target.closest&&e.target.closest('.donut .seg');if(!sg)return;const dn=sg.closest('.donut');dn.querySelector('.dc b').textContent=sg.dataset.v;dn.querySelector('.dc span').textContent=sg.dataset.l+' · '+sg.dataset.p});
 document.addEventListener('pointerout',e=>{const sg=e.target.closest&&e.target.closest('.donut .seg');if(!sg)return;const dn=sg.closest('.donut');dn.querySelector('.dc b').textContent=dn.dataset.c;dn.querySelector('.dc span').textContent=dn.dataset.s});
+
+/* ----- Controles: fixos, parcelas, investimentos e visão geral num só lugar ----- */
+function vMais(){
+  const k=SUBS.some(x=>x[0]===S.sub)?S.sub:'rec',f={rec:vRec,parc:vParc,inv:vInv,geral:vGeral}[k];
+  return `<section class="panel" style="padding:12px 16px"><div class="chips" role="tablist" aria-label="O que ver">${SUBS.map(([key,l])=>`<button class="chip" role="tab" aria-selected="${k===key}" aria-pressed="${k===key}" data-act="sub" data-v="${key}">${l}</button>`).join('')}</div></section>${f()}`;
+}
 
 /* ----- Lançamentos ----- */
 function payOptions(sel){
@@ -1661,7 +1676,8 @@ function guard(){if(S.ro&&S.mode!=='demo'){toast(RO_MSG);return false}return tru
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act]');if(!t)return;const a=t.dataset.act;
   switch(a){
-    case'tab':S.tab=t.dataset.tab;render();window.scrollTo({top:0});break;
+    case'tab':{const tb=t.dataset.tab;if(SUBS.some(x=>x[0]===tb)){S.tab='mais';S.sub=tb;lsSet('caixa-em-dia:sub',tb)}else S.tab=tb;render();window.scrollTo({top:0});break}
+    case'sub':S.sub=t.dataset.v;lsSet('caixa-em-dia:sub',S.sub);render();break;
     case'mprev':S.month=addM(S.month,-1);render();break;
     case'mnext':S.month=addM(S.month,1);render();break;
     case'mtoday':S.month=curYM();render();break;
@@ -1778,6 +1794,7 @@ window.addEventListener('resize',()=>{clearTimeout(window._rz);window._rz=setTim
 (function boot(){
   S.downloads={save:async({filename,data})=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:/\.csv$/.test(filename)?'text/csv;charset=utf-8':'application/json'}));a.download=filename;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)}};
   if(new URLSearchParams(location.search).get('c'))S.authMode='signup';
+  S.sub=lsGet('caixa-em-dia:sub')||'rec';
   setRecs(demoRecs());render();
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();S.installEvt=e;scheduleRender()});
   if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
