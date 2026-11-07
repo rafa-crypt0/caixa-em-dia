@@ -341,11 +341,11 @@ const $=s=>document.querySelector(s);
 const val=l=>l.dir*l.amount;
 
 /* ---------- vocabulário ---------- */
-const CATS_OUT=['Moradia','Contas da casa','Mercado','Saúde','Transporte','Telefone/Internet','Educação','Assinaturas','Lanche/Delivery','Compras online','Vestuário','Beleza','Casa','Lazer','Dízimo/Doações','Tarifas e juros','Consórcio/Empréstimo','Outros'];
-const CATS_IN=['Salário','Aluguel recebido','Vendas','Renda extra','Outros'];
+const CATS_OUT=['Moradia','Contas da casa','Mercado','Saúde','Transporte','Telefone/Internet','Educação','Assinaturas','Lanche/Delivery','Compras online','Vestuário','Beleza','Casa','Lazer','Pix crédito','Presentes','Dízimo/Doações','Tarifas e juros','Consórcio/Empréstimo','Outros'];
+const CATS_IN=['Salário','Aluguel recebido','Vendas','Renda extra','Ajuda/Presente','Reembolso','Outros'];
 const INV_TYPES=['Poupança','CDB / RDB','Tesouro Direto','Ações','Fundos','Previdência','Cripto','Outros'];
 const CUTS={ess:{l:'Essencial',h:'não dá para cortar',c:'--c-ess'},com:{l:'Compromisso',h:'parcela já assumida',c:'--c-com'},red:{l:'Reduzir',h:'precisa, mas dá para gastar menos',c:'--c-red'},cor:{l:'Cortar',h:'dá para tirar',c:'--c-cor'}};
-const CAT_CUT={'Moradia':'ess','Contas da casa':'ess','Mercado':'ess','Saúde':'ess','Transporte':'red','Telefone/Internet':'red','Educação':'red','Assinaturas':'cor','Lanche/Delivery':'cor','Compras online':'cor','Vestuário':'cor','Beleza':'red','Casa':'red','Lazer':'cor','Tarifas e juros':'cor','Consórcio/Empréstimo':'com'};
+const CAT_CUT={'Moradia':'ess','Contas da casa':'ess','Mercado':'ess','Saúde':'ess','Transporte':'red','Telefone/Internet':'red','Educação':'red','Assinaturas':'cor','Lanche/Delivery':'cor','Compras online':'cor','Vestuário':'cor','Beleza':'red','Casa':'red','Lazer':'cor','Pix crédito':'cor','Presentes':'red','Tarifas e juros':'cor','Consórcio/Empréstimo':'com'};
 const RED_DEFAULT={'Lanche/Delivery':.6,'Assinaturas':.5,'Compras online':.7,'Vestuário':.6,'Lazer':.5,'Tarifas e juros':1,'Transporte':.15,'Telefone/Internet':.2,'Beleza':.3,'Casa':.3,'Educação':.1};
 const EXP={fix:1,var:1,loan:1,fd:1};
 const RO_MSG='Você pode ver, mas não lançar. Peça para quem criou o app te convidar como Editor.';
@@ -1185,7 +1185,7 @@ const dlg=$('#sheet');let sheetCtx=null;
 function openSheet(title,bodyHtml,foot,ctx){sheetCtx=ctx||{};dlg.innerHTML=`<form class="sheet" id="sf" novalidate><div class="sheet-h"><h2>${title}</h2><button type="button" class="x" data-act="closesheet" aria-label="Fechar">×</button></div><div class="sheet-b">${bodyHtml}</div><div class="sheet-f">${foot}</div></form>`;if(!dlg.open)dlg.showModal();if(sheetCtx.upd)sheetCtx.upd();const f=dlg.querySelector('[autofocus]');if(f)setTimeout(()=>f.focus(),30)}
 function closeSheet(){if(dlg.open)dlg.close();sheetCtx=null}
 const foot=(e,delLabel='Excluir')=>`${e&&!S.ro?`<button type="button" class="btn danger spacer" data-act="delsheet">${delLabel}</button>`:'<span class="spacer"></span>'}<button type="button" class="btn" data-act="closesheet">Cancelar</button>${S.ro&&S.mode!=='demo'?'':'<button class="btn primary">Salvar</button>'}`;
-const catOpts=(list,sel)=>list.map(c=>`<option ${c===sel?'selected':''}>${esc(c)}</option>`).join('');
+const catOpts=(list,sel)=>(sel&&!list.includes(sel)?[sel,...list]:list).map(c=>`<option ${c===sel?'selected':''}>${esc(c)}</option>`).join('');
 const pplOpts=sel=>`<option value="">Os dois / casa</option>`+S.st.people.map(p=>`<option value="${p.id}" ${sel===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
 const cutSeg=sel=>`<div class="seg" id="cutSeg">${Object.entries(CUTS).map(([k,v])=>`<button type="button" aria-pressed="${sel===k}" data-act="cutpick" data-v="${k}"><span class="dot" style="background:var(${v.c})"></span>${v.l}</button>`).join('')}<button type="button" aria-pressed="${!sel}" data-act="cutpick" data-v="">Não sei</button></div>`;
 const segPick=(name,opts,sel)=>`<div class="seg" data-seg="${name}">${opts.map(([k,l])=>`<button type="button" aria-pressed="${sel===k}" data-act="segpick" data-v="${k}">${l}</button>`).join('')}</div><input type="hidden" name="${name}" value="${sel}">`;
