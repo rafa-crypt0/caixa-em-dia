@@ -333,6 +333,16 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .code{font-family:var(--f-display);font-weight:800;font-size:2.1rem;letter-spacing:.2em;font-stretch:90%;line-height:1.1}
 .codein{text-transform:uppercase;letter-spacing:.2em;font-family:var(--f-display);font-size:1.4rem!important;font-weight:700}
 .members{margin:4px 0 0;padding-left:18px;display:grid;gap:2px}
+.tcards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
+.tcard{border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:8px}
+.tcard h3{margin:0}
+.tq{display:grid;gap:10px}
+.tq #tqOut{display:grid;gap:4px}
+.tag.hora{color:var(--accent)}
+.iachat{display:grid;gap:10px}
+.iaans{white-space:pre-wrap;line-height:1.5;margin:0}
+.iarow{display:flex;gap:8px;flex-wrap:wrap}
+.iarow input{flex:1 1 220px;min-width:0}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -405,7 +415,7 @@ const RO_MSG='Você pode ver, mas não lançar. Peça para quem criou o app te c
 
 /* ---------- estado ---------- */
 const S={recs:{},st:null,mode:'demo',month:curYM(),tab:'resumo',f:{kind:'all',cut:null,person:null,pay:null,cat:null,q:''},
-  sample:null,downloads:null,user:null,me:null,ro:false,names:{},namesKey:'',showTable:false,redAll:false,pendingRestore:null,pend:false,wiping:false,dbChecked:false,phase:'loading',fb:null,cid:null,casa:null,uname:'',invite:null,authMode:'login',installEvt:null};
+  downloads:null,user:null,me:null,ro:false,names:{},namesKey:'',showTable:false,redAll:false,pendingRestore:null,pend:false,wiping:false,dbChecked:false,phase:'loading',fb:null,cid:null,casa:null,uname:'',invite:null,authMode:'login',installEvt:null};
 
 /* registros: cfg, pes (pessoa), cta (conta), car (cartão), ent (entrada), fix (gasto fixo), gas (gasto), tra (transferência),
    emp (empréstimo), inv (investimento), mov (movimento de investimento), con (conferência de saldo), fat (fatura paga), mes (mês fechado) */
@@ -652,6 +662,40 @@ function loanInfo(x,m){
   const fromN=Math.max(n,cur),left=fromN<=tot?(tot-fromN+1)*(+x.parcela||0):0;
   return{tot,cur,n,end,totalPay,juros,i,active:k>=0&&n<=tot,left,done:n>tot};
 }
+
+/* ---------- tempo de trabalho ----------
+   Quanto custa um gasto em horas de trabalho de quem ganha o dinheiro.
+   renda = entradas "Salário" da pessoa no mês; compromissos = fixos + parcelas + empréstimos
+   (os da casa são divididos pela renda de cada um); sobra = renda − compromissos.
+   "hora de trabalho" = renda ÷ horas; "hora livre" = sobra ÷ horas: é o que cada hora
+   trabalhada deixa de fato para gastar com o resto. */
+const HORAS_PADRAO=220;
+const horasDe=p=>+p?.horas>0?+p.horas:HORAS_PADRAO;
+const isComp=l=>l.kind==='fix'||l.kind==='loan'||(l.kind==='var'&&!!l.inst);
+function tempoBase(m){return memo('T'+m,()=>{
+  const ppl=S.st.people,P={};
+  const salDe=(id,mm)=>sum(lines(mm).filter(l=>l.kind==='in'&&!l.compOut&&l.person===id&&l.cat==='Salário'),l=>l.amount);
+  for(const p of ppl){let r=0,mm=m;for(let i=0;i<3&&!r;i++,mm=addM(m,-i))r=salDe(p.id,mm);P[p.id]={p,renda:r,horas:horasDe(p),estimado:!(+p.horas>0),fixo:0}}
+  const L=lines(m),rT=sum(Object.values(P),x=>x.renda);
+  let shared=0;for(const l of L){if(!isComp(l))continue;if(P[l.person])P[l.person].fixo+=l.amount;else shared+=l.amount}
+  const out={};
+  const fin=x=>{x.sobra=x.renda-x.fixo;x.ok=x.renda>0&&x.horas>0;x.vh=x.ok?x.renda/x.horas:0;x.vs=x.ok&&x.sobra>0?x.sobra/x.horas:0;return x};
+  for(const x of Object.values(P)){if(rT>0)x.fixo+=shared*x.renda/rT;out[x.p.id]=fin(x)}
+  const ganham=Object.values(P).filter(x=>x.renda>0);
+  out['']=fin({p:null,renda:rT,horas:sum(ganham,x=>x.horas),estimado:ganham.some(x=>x.estimado),fixo:sum(Object.values(P),x=>x.fixo)+(rT>0?0:shared)});
+  return out;
+})}
+function tempoDe(pid,m){const T=tempoBase(m);return T[pid]&&T[pid].ok?T[pid]:T['']}
+/* 4,5 h → "4h30"; 0,4 h → "24 min" */
+function fH(h){if(!isFinite(h)||h<=0)return'—';const mi=Math.round(h*60);if(mi<60)return mi+' min';const H=Math.floor(mi/60),M=mi%60;return H.toLocaleString('pt-BR')+'h'+(M?pad(M):'')}
+function fDias(h){const d=h/8;return d>=1?`≈ ${d.toLocaleString('pt-BR',{maximumFractionDigits:1})} ${d<1.95?'dia':'dias'} de 8h`:''}
+/* explicação completa de quanto um valor custa em tempo */
+function tempoInfo(v,pid,m){
+  const t=tempoDe(pid,m);if(!t.ok||!(v>0))return null;
+  const h=v/t.vh,hs=t.vs>0?v/t.vs:null,ps=t.sobra>0?v/t.sobra:null;
+  return{t,h,hs,ps,quem:t.p?t.p.name:'a casa'};
+}
+const tempoOn=()=>lsGet('caixa-em-dia:horas')!==false;
 
 /* ---------- persistência ---------- */
 const LS1='caixa-em-dia:v1',LS2='caixa-em-dia:v2';
@@ -1082,12 +1126,43 @@ function vResumo(){
     <label class="fld"><span>O que foi</span><input id="qo-desc" placeholder="Ex.: mercado, farmácia, Uber" ${ro?'disabled':''}></label>
     <div class="two"><label class="fld"><span>Categoria</span><select id="qo-cat">${catOpts(CATS_OUT,'Mercado')}</select></label><label class="fld"><span>Como pagou</span><select id="qo-pay">${payOptions(defPay())}</select></label></div>
     <div class="two"><label class="fld"><span>Quem gastou</span><select id="qo-p">${pplOpts(myPid())}</select></label><label class="fld"><span>Data</span><input id="qo-d" type="date" value="${dd}"></label></div>
+    <span class="small" id="qo-tempo" style="color:var(--accent)" aria-live="polite"></span>
     <button class="btn out-btn" data-act="qout" ${ro?'disabled':''}>✓ Adicionar saída</button>
     <button class="link" data-act="qmore" style="justify-self:start">Parcelado ou outra pessoa vai pagar? Abrir formulário completo</button></div></div>`;
   return `${alertas(m)}
   <section class="resumo-top">${inC}<div class="panel donutbox" style="justify-content:flex-start"><h2 style="align-self:flex-start">Saldo de ${ymL(m)}</h2>${panorama(m)}</div>${outC}</section>
   ${kpis(m)}
+  ${iaPanel()}
+  ${tempoPanel(m)}
   <section class="panel"><div class="panel-h"><h2>Últimas movimentações</h2><button class="link" data-act="tab" data-tab="lanc">Ver todas →</button></div>${ultimas(m,6)}</section>`;
+}
+/* ----- Tempo de trabalho ----- */
+function tempoPanel(m){
+  const T=tempoBase(m),ppl=S.st.people.map(p=>T[p.id]).filter(x=>x.renda>0);
+  if(!ppl.length)return `<section class="panel"><div class="panel-h"><h2>Quanto custa em horas de trabalho</h2></div><p class="help" style="margin:0">Cadastre o salário de cada pessoa como entrada com a categoria <b>Salário</b> (em <button class="link" data-act="tab" data-tab="rec">Fixos e entradas</button>) para ver quanto cada gasto custa em tempo de trabalho.</p></section>`;
+  const card=x=>`<div class="tcard"><div class="panel-h" style="margin:0"><h3>${esc(x.p.name)}</h3>${x.estimado?`<button class="link small" data-act="tab" data-tab="ajustes">${x.horas} h/mês (ajustar)</button>`:`<span class="small muted">${x.horas} h/mês</span>`}</div>
+    <dl class="kv"><dt>Salário</dt><dd class="num">${money(x.renda)}</dd><dt>Fixos e parcelas</dt><dd class="num">− ${money(x.fixo)}</dd><dt><b>Sobra no mês</b></dt><dd class="num ${x.sobra<0?'neg':'pos'}"><b>${money(x.sobra)}</b></dd>
+    <dt>Cada hora de trabalho vale</dt><dd class="num">${money(x.vh)}</dd><dt>Cada hora deixa livre</dt><dd class="num">${x.vs>0?money(x.vs):'nada'}</dd></dl></div>`;
+  const s=summary(m),vr=sum(s.L.filter(l=>l.kind==='var'&&!l.inst),l=>l.amount),corta=sum(s.L.filter(l=>(l.kind==='var'||l.kind==='fix')&&l.cut==='cor'),l=>l.amount),tc=T[''];
+  const casaTxt=tc.ok?`<p class="small" style="margin:0">No dia a dia de ${ymL(m)} saíram <b class="num">${money(vr)}</b> = <b>${fH(vr/tc.vh)}</b> de trabalho da casa.${corta>0?` Só o que está marcado como <b>Cortar</b> (${money(corta)}) equivale a <b>${fH(corta/tc.vh)}</b>.`:''}</p>`:'';
+  const ro=S.ro&&S.mode!=='demo';
+  return `<section class="panel"><div class="panel-h"><h2>Quanto custa em horas de trabalho</h2><span class="small muted">pelo salário cadastrado</span></div>
+    <div class="tcards">${ppl.map(card).join('')}</div>
+    <div class="calc tq" style="margin-top:12px"><b>Antes de comprar, veja quanto custa em tempo</b>
+      <div class="two"><label class="fld"><span>Valor</span><input class="money-in num" id="tq-v" inputmode="decimal" placeholder="0,00"></label><label class="fld"><span>Quem vai pagar</span><select id="tq-p">${pplOpts(myPid())}</select></label></div>
+      <div id="tqOut" class="small muted">Digite um valor.</div></div>
+    ${casaTxt}</section>`;
+}
+function tqUpd(){const o=$('#tqOut');if(!o)return;const v=parseMoney($('#tq-v').value);o.innerHTML=v>0?tempoTxt(v,$('#tq-p').value,S.month):'Digite um valor.'}
+function qoHint(){const o=$('#qo-tempo');if(!o)return;const v=parseMoney($('#qo-v').value),i=v>0&&tempoOn()?tempoInfo(v,$('#qo-p').value,S.month):null;o.textContent=i?`⏱ ${fH(i.h)} de trabalho${i.hs?` · ${fH(i.hs)} da sobra`:''}`:''}
+function tempoTxt(v,pid,m){
+  const i=tempoInfo(v,pid,m);if(!i)return'<span class="muted">Sem salário cadastrado para essa pessoa.</span>';
+  const{t,h,hs,ps,quem}=i;
+  const a=`<div><b class="num">${money(v)}</b> = <b>${fH(h)}</b> de trabalho de ${esc(quem)} ${fDias(h)?`<span class="muted">(${fDias(h)})</span>`:''}</div>`;
+  if(!(t.sobra>0))return a+`<div style="color:var(--bad)">Os fixos e parcelas já levam todo o salário: esse dinheiro não sobra, ele sai do vermelho.</div>`;
+  const b=`<div>Mas depois dos fixos sobram ${money(t.sobra)} por mês. Isso é <b>${pct(ps).replace(',00','')}</b> da sobra: na prática são <b>${fH(hs)}</b> de trabalho só para juntar esse valor ${fDias(hs)?`<span class="muted">(${fDias(hs)})</span>`:''}.</div>`;
+  const c=ps>=1?`<div style="color:var(--bad)">É mais do que sobra no mês inteiro.</div>`:'';
+  return a+b+c;
 }
 function catSegs(m){
   const s=summary(m),mode=S.catMode||'out',by={};
@@ -1187,7 +1262,12 @@ function lineRow(l){
   const ref=l.refund?`<span class="tag" style="color:var(--accent)">${esc(l.refund.who)} ${l.refund.received?'devolveu':'deve'} ${money(l.refund.amount)}</span>`:'';
   const amt=l.kind==='tr'?`<span class="a num mv">⇄ ${money(l.amount)}</span>`:`<span class="a num ${l.dir>0?'in':''}">${l.dir>0?'+ ':''}${money(l.amount)}</span>`;
   const extra=l.kind==='fd'?` data-card="${l.src.card}" data-ym="${l.src.ym}"`:'';
-  return `<button class="row-i" data-act="edit" data-kind="${l.kind}" data-id="${l.src.id}"${extra}><span class="d">${esc(l.desc)}</span>${amt}<span class="m">${meta.join(' · ')} ${cutTag(EXP[l.kind]?l.cut:null)} ${instTag(l)} ${ref} ${whoTag(l.src)}</span></button>`;
+  return `<button class="row-i" data-act="edit" data-kind="${l.kind}" data-id="${l.src.id}"${extra}><span class="d">${esc(l.desc)}</span>${amt}<span class="m">${meta.join(' · ')} ${cutTag(EXP[l.kind]?l.cut:null)} ${instTag(l)} ${ref} ${whoTag(l.src)} ${horaTag(l)}</span></button>`;
+}
+function horaTag(l){
+  if(!tempoOn()||(l.kind!=='var'&&l.kind!=='fix'))return'';
+  const t=tempoDe(l.person,S.month);if(!t.ok)return'';
+  return `<span class="tag hora" title="Horas de trabalho de ${esc(t.p?t.p.name:'a casa')} para pagar isso">⏱ ${fH(l.amount/t.vh)}</span>`;
 }
 function vLanc(){
   const f=S.f,L=filteredLines(),tot=sum(L.filter(l=>l.kind!=='tr'),val);
@@ -1199,7 +1279,7 @@ function vLanc(){
   const people=[...S.st.people.map(p=>[p.id,p.name]),['_','Os dois / casa']];
   const anyF=f.kind!=='all'||f.cut||f.person||f.pay||f.cat||f.q;
   return `<section class="panel">
-    <div class="panel-h"><h2>Lançamentos de ${ymLong(S.month)}</h2><div class="chips">${S.sample&&!S.ro?'<button class="btn sm" data-act="ai">Importar extrato com IA</button>':''}${S.downloads?'<button class="btn sm" data-act="csv">Baixar CSV</button>':''}</div></div>
+    <div class="panel-h"><h2>Lançamentos de ${ymLong(S.month)}</h2><div class="chips">${iaOn()&&!S.ro?'<button class="btn sm" data-act="ai">Importar extrato com IA</button>':''}${S.downloads?'<button class="btn sm" data-act="csv">Baixar CSV</button>':''}</div></div>
     <div class="filters">
       <div class="row chips">${kinds.map(([k,l])=>`<button class="chip" aria-pressed="${f.kind===k}" data-act="fk" data-v="${k}">${l}</button>`).join('')}</div>
       <div class="row chips">${cuts.map(([k,l])=>`<button class="chip" aria-pressed="${f.cut===k}" data-act="fc" data-v="${k}"><span class="dot" style="background:var(${k==='none'?'--c-none':CUTS[k].c})"></span>${l}</button>`).join('')}</div>
@@ -1349,6 +1429,7 @@ function vRed(){
   <div class="tablewrap"><table class="cmp"><thead><tr><th></th><th>${ymL(m)} hoje</th><th>${ymL(m)} cortando</th><th>${ymL(m2)} hoje</th><th>${ymL(m2)} cortando</th></tr></thead><tbody>
     <tr><td>Gastos</td><td class="num">${money(A.a.out)}</td><td class="num after">${money(A.b.out)}</td><td class="num">${money(B.a.out)}</td><td class="num after">${money(B.b.out)}</td></tr>
     <tr><td>Economia</td><td></td><td class="num pos after">${money(A.a.out-A.b.out)}</td><td></td><td class="num pos after">${money(B.a.out-B.b.out)}</td></tr>
+    ${(()=>{const t1=tempoDe('',m),t2=tempoDe('',m2);return t1.ok||t2.ok?`<tr><td>Horas de trabalho poupadas</td><td></td><td class="num pos after">${t1.ok?fH((A.a.out-A.b.out)/t1.vh):'—'}</td><td></td><td class="num pos after">${t2.ok?fH((B.a.out-B.b.out)/t2.vh):'—'}</td></tr>`:''})()}
     <tr><td>Resultado do mês</td><td class="num">${money(A.a.result)}</td><td class="num after">${money(A.b.result)}</td><td class="num">${money(B.a.result)}</td><td class="num after">${money(B.b.result)}</td></tr>
     <tr><td><b>Sobra para o mês seguinte</b></td><td class="num">${nx(A.c,A.a)}</td><td class="num after pos">${nx(A.c,A.b)}</td><td class="num">${nx(B.c,B.a)}</td><td class="num after pos">${B.cb===null?'—':money(B.cb+B.b.cash)}</td></tr>
     ${cardRows}</tbody></table></div>
@@ -1358,7 +1439,7 @@ function vRed(){
 /* ----- Ajustes ----- */
 function vAjustes(){
   const st=S.st,dis=S.ro&&S.mode!=='demo'?'disabled':'';
-  const ppl=st.people.map(p=>`<div class="setrow"><label class="fld"><span>Nome</span><input id="pn-${p.id}" value="${esc(p.name)}" data-set="1" data-id="${p.id}" data-f="name" ${dis}></label><div><button class="btn sm danger" data-act="delset" data-id="${p.id}" ${dis}>Remover</button></div></div>`).join('');
+  const ppl=st.people.map(p=>`<div class="setrow"><label class="fld"><span>Nome</span><input id="pn-${p.id}" value="${esc(p.name)}" data-set="1" data-id="${p.id}" data-f="name" ${dis}></label><label class="fld"><span>Horas de trabalho por mês</span><input id="ph-${p.id}" type="number" min="1" max="744" step="1" inputmode="numeric" placeholder="${HORAS_PADRAO}" value="${+p.horas>0?p.horas:''}" data-set="1" data-id="${p.id}" data-f="horas" data-num ${dis}></label><div><button class="btn sm danger" data-act="delset" data-id="${p.id}" ${dis}>Remover</button></div></div>`).join('');
   const accs=st.accounts.map(a=>`<div class="setrow"><label class="fld"><span>Nome</span><input id="an-${a.id}" value="${esc(a.name)}" data-set="1" data-id="${a.id}" data-f="name" ${dis}></label><label class="fld"><span>Tipo</span><select id="at-${a.id}" data-set="1" data-id="${a.id}" data-f="type" ${dis}><option value="banco" ${!isWallet(a)?'selected':''}>Conta no banco</option><option value="carteira" ${isWallet(a)?'selected':''}>Dinheiro vivo (carteira)</option></select></label><label class="fld"><span>De quem</span><select id="ap-${a.id}" data-set="1" data-id="${a.id}" data-f="personId" ${dis}><option value="">Os dois / casa</option>${st.people.map(p=>`<option value="${p.id}" ${a.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label class="fld"><span>Saldo no início (${ymL(st.start)})</span><input id="ai-${a.id}" inputmode="decimal" value="${moneyIn(a.initial)}" data-set="1" data-id="${a.id}" data-f="initial" data-money ${dis}></label><div><button class="btn sm danger" data-act="delset" data-id="${a.id}" ${dis}>Remover</button></div></div>`).join('');
   const crds=st.cards.map(c=>`<div class="cardrow"><div><b>${esc(c.name)}</b> <span class="small muted">· paga pela ${esc(acc(c.accountId)?.name||'—')}</span><br><span class="small">${cardRuleText(c)}</span><br><span class="small muted">${cardExample(c)}</span></div><button class="btn sm" data-act="edit" data-kind="car" data-id="${c.id}" ${dis}>Editar</button></div>`).join('');
   const where=S.mode==='demo'?'Você está no exemplo: nada é salvo.':'Os dados ficam no banco da casa (Firebase). O app funciona sem internet e envia tudo quando a conexão volta. Baixe um backup de vez em quando.';
@@ -1367,7 +1448,7 @@ function vAjustes(){
   const casaSec=`<section class="panel"><div class="panel-h"><h2>${esc(S.casa?.nome||'Sua casa')}</h2><span class="small muted">${esc(S.fb?.email||'')}</span></div><p class="help">Quem está na casa vê e lança nos mesmos dados, cada um no seu celular.</p><ul class="members">${mem}</ul>${inv}<div class="btnrow" style="margin-top:14px"><button class="btn" data-act="mkinvite">${S.invite?'Gerar outro código':'Convidar alguém da casa'}</button>${S.installEvt?'<button class="btn" data-act="install">Instalar no celular</button>':''}<button class="btn" data-act="logout">Sair da conta</button></div></section>`;
   const pr=S.pendingRestore?`<div class="banner bad" style="margin-top:12px"><p>O backup tem ${S.pendingRestore.length} registros. Restaurar troca tudo o que está aqui pelos dados do backup${S.mode==='db'?', para todos da casa':''}.</p><button class="btn danger" data-act="restore2">Substituir pelos dados do backup</button><button class="btn" data-act="restore0">Cancelar</button></div>`:'';
   return `${casaSec}
-  <section class="panel"><div class="panel-h"><h2>Pessoas</h2><button class="btn sm" data-act="addset" data-what="pes" ${dis}>+ Pessoa</button></div>${ppl}</section>
+  <section class="panel"><div class="panel-h"><h2>Pessoas</h2><button class="btn sm" data-act="addset" data-what="pes" ${dis}>+ Pessoa</button></div><p class="help">As horas servem para mostrar quanto cada gasto custa em tempo de trabalho. O valor da hora sai das entradas com a categoria <b>Salário</b> de cada pessoa. Referência: 44 horas por semana = 220 h/mês; 40 horas = 200 h/mês; 30 horas = 150 h/mês. Em branco, o app usa ${HORAS_PADRAO}.</p>${ppl}<label class="check" style="margin-top:10px"><input type="checkbox" id="cfg-horas" ${tempoOn()?'checked':''}> Mostrar o tempo de trabalho ao lado dos gastos (só neste aparelho)</label></section>
   <section class="panel"><div class="panel-h"><h2>Contas e carteira</h2><button class="btn sm" data-act="addset" data-what="cta" ${dis}>+ Conta</button></div><p class="help">O saldo de início é quanto havia em cada uma no primeiro dia de ${ymLong(st.start)}. Separe o dinheiro vivo: cadastre a carteira como "Dinheiro vivo". Saque e depósito são transferências entre ela e o banco.</p>${accs}</section>
   <section class="panel"><div class="panel-h"><h2>Cartões de crédito</h2><button class="btn sm" data-act="newcard" ${st.accounts.length&&!dis?'':'disabled'}>+ Cartão</button></div><p class="help">Cada banco diz a regra de um jeito. Escolha a que aparece no seu app: "fecha no dia" (compras nesse dia já vão para a próxima fatura) ou "compras até o dia" (compras nesse dia ainda entram).</p>${crds||'<div class="empty small">Nenhum cartão.</div>'}</section>
   <section class="panel"><div class="panel-h"><h2>Início do controle</h2></div><div class="setrow"><label class="fld"><span>Primeiro mês</span><input id="cfg-start" type="month" value="${st.start}" data-set="start" ${dis}></label></div></section>
@@ -1404,6 +1485,7 @@ function formVar(x){
     <div class="two"><label class="fld"><span>Data da compra</span><input id="f-date" type="date" name="date" value="${x.date}" required></label><label class="fld"><span>Categoria</span><select id="f-cat" name="cat">${catOpts(CATS_OUT,x.cat)}</select></label></div>
     <div class="two"><label class="fld"><span>Quem gastou</span><select id="f-person" name="personId">${pplOpts(x.personId)}</select></label><label class="fld"><span>Como pagou</span><select id="f-pay" name="pay">${payOptions(x.pay)}</select></label></div>
     <p class="help" id="billHint"></p>
+    <div class="calc" id="tempoPrev" hidden></div>
     <div class="fld"><span>Dá para cortar?</span>${cutSeg(cutSel)}<input type="hidden" name="cut" value="${cutSel||''}"></div>
     <label class="check"><input type="checkbox" id="f-isInst" name="isInst" ${isI?'checked':''} data-act="toggle" data-t="instBox"> Compra parcelada</label>
     <div class="sub" id="instBox" ${isI?'':'hidden'}>
@@ -1423,6 +1505,7 @@ function updVar(ev){
   $('#amtLbl').textContent=isI?(imode==='total'?'Valor total da compra':'Valor de cada parcela'):'Valor';
   const hint=$('#billHint');
   if(p&&isDate(date)){if(p.type==='card'){const f=isI&&isYM(bill)?addM(bill,-(cur-1)):cardDue(p.card,date);hint.textContent=`Mês da fatura: ${ymL(f)} (${p.card.name}, vence ${fD(dateIn(f,p.card.dueDay))}). Regra: ${cardRuleText(p.card)}.`}else hint.textContent=isWallet(p.acc)?'Sai da carteira no dia da compra.':`Sai da ${p.acc.name} no dia da compra.`}else hint.textContent='';
+  const tp=$('#tempoPrev');if(tp){const tot0=isI&&imode==='parcela'?amt*tot:amt,ok=tempoOn()&&tot0>0&&tempoInfo(tot0,fv('personId'),S.month);tp.hidden=!ok;if(ok)tp.innerHTML=tempoTxt(tot0,fv('personId'),S.month)}
   const box=$('#instPrev');
   if(!isI||!(amt>0)||!isYM(bill)){box.innerHTML='';return}
   const total=imode==='total'?amt:amt*tot,x={total:imode==='total'?amt:null,amount:imode==='total'?round2(amt/tot):amt,inst:{tot,cur}};
@@ -1639,21 +1722,92 @@ function aiSheet(){
 async function aiRun(){
   const txt=fv('txt').trim();if(txt.length<20)return toast('Cole o texto do extrato.');
   const btn=$('#aiBtn'),out=$('#aiOut');btn.disabled=true;btn.textContent='Lendo…';out.innerHTML='<p class="small muted">Lendo o extrato…</p>';
-  const prompt=`Você recebe o texto de uma fatura de cartão de crédito ou de um extrato bancário brasileiro.
-Extraia somente as COMPRAS e DÉBITOS (dinheiro que saiu). Ignore: pagamentos da fatura, saldos, totais, limites, créditos, estornos, transferências recebidas, aplicações e resgates de poupança/investimento, e linhas de "saldo do dia".
-Responda SOMENTE com um array JSON, um objeto por compra, assim:
-[{"data":"2026-10-12","descricao":"Supermercado X","valor":123.45,"parcela":1,"total_parcelas":1,"categoria":"Mercado"}]
-Regras: "data" no formato AAAA-MM-DD (se o ano não aparecer, use ${fv('year')}); "valor" positivo com ponto decimal, o valor da linha (numa linha parcelada, é o valor da parcela); "parcela" e "total_parcelas" só quando a linha indicar parcelamento (ex.: "Parcela 3/10" ou "3/10"), senão 1 e 1; "categoria" deve ser uma destas: ${CATS_OUT.join(', ')}. IOF e juros vão em "Tarifas e juros".
-
-TEXTO:
-${txt.slice(0,60000)}`;
-  try{const arr=await S.sample.json(prompt,{modelTier:'default'});
-    const rows=(Array.isArray(arr)?arr:[]).filter(r=>r&&+r.valor>0&&isDate(r.data||''));
+  try{const res=await iaCall('extrato',{texto:txt,ano:fv('year'),categorias:CATS_OUT});
+    const arr=res&&Array.isArray(res.compras)?res.compras:[];
+    const rows=arr.filter(r=>r&&+r.valor>0&&isDate(r.data||''));
     if(!rows.length){out.innerHTML='<p class="small">Não encontrei compras nesse texto. Confira se colou o extrato inteiro.</p>';btn.disabled=false;btn.textContent='Ler com IA';return}
-    sheetCtx.rows=rows.map(r=>({date:r.data,desc:String(r.descricao||'Compra').slice(0,80),amount:+r.valor,cur:Math.max(1,parseInt(r.parcela)||1),tot:Math.max(1,parseInt(r.total_parcelas)||1),cat:CATS_OUT.includes(r.categoria)?r.categoria:'Outros'}));
+    sheetCtx.rows=rows.map(r=>({date:r.data,desc:String(r.descricao||'Compra').slice(0,80),amount:round2(+r.valor),cur:Math.max(1,parseInt(r.parcela)||1),tot:Math.max(1,parseInt(r.total_parcelas)||1),cat:CATS_OUT.includes(r.categoria)?r.categoria:'Outros'}));
     out.innerHTML=`<p class="small"><b>${rows.length}</b> compras encontradas, ${money(sum(sheetCtx.rows,r=>r.amount))}. Desmarque o que não quer importar.</p><div class="rows">${sheetCtx.rows.map((r,i)=>`<label class="row-i" style="grid-template-columns:auto minmax(0,1fr) auto"><input type="checkbox" checked data-ai="${i}" style="grid-row:1/span 2;width:18px;height:18px;accent-color:var(--accent)"><span class="d">${esc(r.desc)}</span><span class="a num">${money(r.amount)}</span><span class="m" style="grid-column:2">${fD(r.date)} · ${esc(r.cat)}${r.tot>1?` · parcela ${r.cur}/${r.tot}`:''}</span></label>`).join('')}</div>`;
     btn.disabled=false;btn.textContent='Importar selecionadas';btn.dataset.act='aiimport';
-  }catch(e){const c=e&&e.code;out.innerHTML=`<p class="small" style="color:var(--bad)">${c==='not_granted'||c==='sampling_disabled'?'O Claude não está liberado para esta página.':c==='rate_limited'?'Muitos pedidos seguidos. Espere um pouco e tente de novo.':c==='prompt_too_large'?'O texto é grande demais. Cole uma parte de cada vez.':'Não consegui ler esse extrato. Tente de novo ou cole um trecho menor.'}</p>`;btn.disabled=false;btn.textContent='Ler com IA'}
+  }catch(e){out.innerHTML=`<p class="small" style="color:var(--bad)">${iaErr(e)}</p>`;btn.disabled=false;btn.textContent='Ler com IA'}
+}
+/* ----- ponte com a IA (Cloudflare Worker, ver pasta ia/) ----- */
+const iaOn=()=>!!(window.IA_URL&&S.mode==='db'&&S.cid&&FB&&FB.auth.currentUser);
+async function iaCall(tarefa,dados){
+  if(!iaOn())throw{code:'not_granted'};
+  const tok=await FB.auth.currentUser.getIdToken();let r;
+  try{r=await fetch(window.IA_URL,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+tok},body:JSON.stringify({casa:S.cid,tarefa,dados})})}
+  catch(e){throw{code:'offline'}}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok||j.error)throw{code:j.error||'api'};
+  return j.json!==undefined?j.json:j.texto;
+}
+function iaErr(e){const c=e&&e.code;return c==='not_granted'?'A IA só funciona com a conta conectada à casa.':c==='offline'?'Sem internet agora. Tente de novo quando a conexão voltar.':c==='rate_limited'?'Muitos pedidos seguidos. Espere um pouco e tente de novo.':c==='prompt_too_large'?'O texto é grande demais. Mande uma parte de cada vez.':c==='recusado'?'A IA não quis responder isso. Tente escrever de outro jeito.':c==='config'?'A ponte da IA não está configurada. Veja o arquivo ia/LEIAME.md.':'Não consegui falar com a IA agora. Tente de novo.'}
+function iaPanel(){
+  if(!iaOn())return'';const ro=S.ro;
+  return `<section class="panel iachat"><div class="panel-h" style="margin:0"><h2>Assistente</h2>${ro?'':'<button class="btn sm" data-act="ai">Importar extrato</button>'}</div>
+    ${ro?'':`<div class="fld"><span>Lançar escrevendo</span><div class="iarow"><input id="ia-frase" placeholder="Ex.: gastei 45 no mercado no pix" enterkeyhint="go"><button class="btn" data-act="iafrase" id="iaFraseBtn">Preencher</button></div><span class="help">O app preenche o lançamento e você confere antes de salvar.</span></div>`}
+    <div class="fld"><span>Pergunte sobre as contas</span><div class="iarow"><input id="ia-perg" placeholder="Ex.: onde dá para cortar este mês?" enterkeyhint="send"><button class="btn" data-act="iaperg" id="iaPergBtn">Perguntar</button></div></div>
+    <div class="chips">${['Onde dá para cortar este mês?','Quanto gastamos com delivery nos últimos meses?','Em quantas horas de trabalho sai o mercado do mês?'].map(q=>`<button class="chip" data-act="iaq" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+    <div id="iaAns" aria-live="polite">${iaAnsHtml()}</div></section>`;
+}
+function iaAnsHtml(){const a=S.iaAns;if(!a)return'';if(a.busy)return'<p class="small muted">Lendo os seus lançamentos…</p>';if(a.err)return`<p class="small" style="color:var(--bad)">${esc(a.err)}</p>`;
+  return `<div class="calc"><p class="small muted" style="margin:0">${esc(a.q)}</p><p class="iaans">${esc(a.t)}</p><button class="link" data-act="iaclear" style="justify-self:start">limpar</button></div>`;
+}
+function payLabels(){
+  return [...S.st.cards.map(c=>({k:'c:'+c.id,l:`${c.name} (cartão de crédito)`})),...S.st.accounts.map(a=>({k:'a:'+a.id,l:`${a.name} (${isWallet(a)?'dinheiro vivo / carteira':'conta: pix ou débito'})`}))];
+}
+async function iaFrase(){
+  const el=$('#ia-frase'),frase=(el?.value||'').trim();if(frase.length<3)return toast('Escreva o que gastou ou recebeu.');
+  if(!S.st.accounts.length){S.tab='ajustes';render();return toast('Cadastre uma conta primeiro.')}
+  const btn=$('#iaFraseBtn');btn.disabled=true;btn.textContent='Lendo…';
+  const P=payLabels(),me=person(myPid());
+  try{const r=await iaCall('frase',{frase,hoje:today(),diaSemana:wday(today()),eu:me?.name||'',pessoas:S.st.people.map(p=>p.name),pagamentos:P.map(x=>x.l),categorias:CATS_OUT,categoriasEntrada:CATS_IN});
+    btn.disabled=false;btn.textContent='Preencher';
+    if(!r||!(+r.valor>0))return toast('Não entendi o valor. Tente de novo, ex.: "gastei 45 no mercado".');
+    const norm=x=>String(x||'').trim().toLowerCase();
+    const pid=(S.st.people.find(p=>norm(p.name)===norm(r.pessoa))||{}).id??'';
+    const pk=(P.find(x=>norm(x.l)===norm(r.pagamento))||P.find(x=>norm(r.pagamento)&&norm(x.l).startsWith(norm(r.pagamento)))||{}).k||'';
+    const d=isDate(r.data)?r.data:today();
+    if(el)el.value='';
+    if(r.tipo==='entrada'){
+      const set=(id,v)=>{const f=$('#'+id);if(f&&v!=null&&v!=='')f.value=v};
+      set('qi-v',moneyIn(r.valor));set('qi-desc',r.descricao);set('qi-cat',CATS_IN.includes(r.categoria)?r.categoria:'Outros');set('qi-p',pid);set('qi-d',d);if(pk.startsWith('a:'))set('qi-acc',pk.slice(2));
+      $('#qi-v')?.scrollIntoView({behavior:'smooth',block:'center'});$('#qi-v')?.focus();
+      return toast('Confira a entrada e toque em "Adicionar entrada".');
+    }
+    const tot=Math.max(1,parseInt(r.parcelas)||1),cat=CATS_OUT.includes(r.categoria)?r.categoria:'Outros';
+    formVar(null);F('amount').value=moneyIn(r.valor);F('desc').value=String(r.descricao||'').slice(0,80);F('date').value=d;F('cat').value=cat;F('personId').value=pid;if(pk)F('pay').value=pk;
+    const cut=tot>1?'com':(CAT_CUT[cat]||'');F('cut').value=cut;dlg.querySelectorAll('#cutSeg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===cut));
+    if(tot>1){const c=F('isInst');c.checked=true;$('#instBox').hidden=false;F('tot').value=tot}
+    sheetCtx?.upd?.({target:F('date')});
+    if(!pk)toast('Escolha como foi pago e confira antes de salvar.');
+  }catch(e){btn.disabled=false;btn.textContent='Preencher';toast(iaErr(e))}
+}
+/* resumo dos dados para a IA responder perguntas */
+function iaContexto(){
+  const m=S.month,n=x=>round2(x).toFixed(2),out=[];
+  out.push(`Mês aberto no app: ${ymLong(m)}. Hoje: ${today()}.`);
+  out.push('Pessoas: '+S.st.people.map(p=>p.name).join(', ')+'.');
+  const T=tempoBase(m);
+  for(const p of S.st.people){const x=T[p.id];if(x&&x.ok)out.push(`Tempo de ${p.name}: salário ${n(x.renda)}, ${x.horas} h/mês, fixos e parcelas ${n(x.fixo)}, sobra ${n(x.sobra)}, hora de trabalho vale ${n(x.vh)}, cada hora deixa livre ${n(x.vs)}.`)}
+  out.push('\nResumo por mês (entradas | saídas | resultado | gastos por categoria):');
+  for(const mm of lastMonths(m,6)){const s=summary(mm),by={};for(const l of s.L)if(EXP[l.kind])by[l.cat]=(by[l.cat]||0)+expVal(l);
+    out.push(`${mm}: ${n(s.inT+s.dev)} | ${n(s.out)} | ${n(s.result)} | `+Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`${c} ${n(v)}`).join('; '))}
+  out.push(`\nLançamentos de ${m} (data; tipo; descrição; categoria; pessoa; pagamento; valor; dá para cortar):`);
+  const KN={in:'entrada',dev:'devolução',fix:'fixo',var:'gasto',loan:'parcela de empréstimo',loanin:'empréstimo recebido',tr:'transferência',apl:'aplicação',res:'resgate',aj:'ajuste',fd:'diferença de fatura'};
+  for(const l of summary(m).L.filter(l=>!(l.kind==='tr'&&l.leg==='to')).slice(0,600))
+    out.push([l.date||'sem dia',KN[l.kind]||l.kind,l.desc,l.cat,pname(l.person),l.via,n(l.kind==='tr'?l.amount:val(l)),l.cut&&EXP[l.kind]?CUTS[l.cut].l:''].join('; ')+(l.inst?` (parcela ${l.inst.n}/${l.inst.tot})`:''));
+  return out.join('\n').slice(0,90000);
+}
+async function iaPerg(q){
+  const el=$('#ia-perg');q=(q||el?.value||'').trim();if(q.length<3)return toast('Escreva a pergunta.');
+  if(S.iaAns?.busy)return;
+  const show=()=>{const b=$('#iaAns');if(b)b.innerHTML=iaAnsHtml();const bt=$('#iaPergBtn');if(bt){bt.disabled=!!S.iaAns?.busy;bt.textContent=S.iaAns?.busy?'Pensando…':'Perguntar'}};
+  S.iaAns={busy:true};show();
+  try{const t=await iaCall('pergunta',{pergunta:q,contexto:iaContexto()});S.iaAns={q,t:String(t||'').trim()};const e2=$('#ia-perg');if(e2)e2.value=''}
+  catch(e){S.iaAns={err:iaErr(e)}}
+  show();
 }
 function aiImport(){
   const p=fv('pay'),pi=pay(p),fat=fv('fat'),list=[];
@@ -1724,6 +1878,10 @@ document.addEventListener('click',e=>{
     case'ai':aiSheet();break;
     case'airun':aiRun();break;
     case'aiimport':aiImport();break;
+    case'iafrase':if(guard())iaFrase();break;
+    case'iaperg':iaPerg();break;
+    case'iaq':iaPerg(t.dataset.q);break;
+    case'iaclear':S.iaAns=null;scheduleRender();break;
     case'csv':csv();break;
     case'qin':if(guard())quickIn();break;
     case'qout':if(guard())quickOut();break;
@@ -1738,6 +1896,7 @@ document.addEventListener('click',e=>{
     case'install':if(S.installEvt){S.installEvt.prompt();S.installEvt.userChoice?.finally(()=>{S.installEvt=null;scheduleRender()})}break;
   }
 });
+document.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.isComposing)return;const id=e.target&&e.target.id;if(id==='ia-frase'){e.preventDefault();if(guard())iaFrase()}else if(id==='ia-perg'){e.preventDefault();iaPerg()}});
 document.addEventListener('submit',e=>{const f=e.target;if(f.classList&&f.classList.contains('gateform')){e.preventDefault();gateSubmit(f)}});
 dlg.addEventListener('submit',e=>{e.preventDefault();if(S.ro&&S.mode!=='demo'){toast(RO_MSG);return}sheetCtx?.save?.()});
 dlg.addEventListener('input',e=>{sheetCtx?.upd?.(e)});
@@ -1750,16 +1909,22 @@ let qT,rT;
 document.addEventListener('input',e=>{
   const t=e.target;if(dlg.contains(t))return;
   if(t.id==='fQ'){clearTimeout(qT);qT=setTimeout(()=>{S.f.q=t.value;scheduleRender()},250);return}
+  if(t.id==='tq-v'){tqUpd();return}
+  if(t.id==='qo-v'){qoHint();return}
   if(t.dataset.red!=null){t.nextElementSibling.textContent=t.value+'%';const cat=t.dataset.red,v=(+t.value)/100;clearTimeout(rT);rT=setTimeout(()=>{const c=S.recs.cfg||{id:'cfg',t:'cfg',start:S.st.start};put({...c,reduce:{...S.st.reduce,[cat]:v}})},350);return}
 });
 document.addEventListener('change',e=>{
   const t=e.target;if(dlg.contains(t))return;
+  if(t.id==='tq-p'){tqUpd();return}
+  if(t.id==='qo-p'){qoHint();return}
+  if(t.id==='cfg-horas'){lsSet('caixa-em-dia:horas',t.checked);render();return}
   if(t.id==='fPerson'){S.f.person=t.value||null;render();return}
   if(t.id==='fPay'){S.f.pay=t.value||null;render();return}
   if(t.id==='fCat'){S.f.cat=t.value||null;render();return}
   if(t.dataset.set==='start'){if(isYM(t.value)){const c=S.recs.cfg||{id:'cfg',t:'cfg',reduce:S.st.reduce};put({...c,start:t.value},'Início do controle alterado.');if(DB.db&&S.mode==='db')subscribeAll()}return}
   if(t.dataset.set){const r=S.recs[t.dataset.id];if(!r)return;let v=t.value;
     if(t.dataset.money!=null){v=parseMoney(v);if(isNaN(v))v=0}
+    if(t.dataset.num!=null){v=parseFloat(String(v).replace(',','.'));if(!(v>0))v=null}
     put({...r,[t.dataset.f]:v});return}
 });
 $('#fileIn').addEventListener('change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
