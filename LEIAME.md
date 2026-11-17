@@ -75,6 +75,19 @@ O app abre em tela cheia, com ícone próprio, e funciona sem internet. O que fo
 
 ---
 
+## Horas de trabalho
+
+Na aba **Resumo**, o quadro **Quanto custa em horas de trabalho** mostra, para cada pessoa, o salário, os fixos e parcelas, quanto sobra e quanto vale cada hora trabalhada. Também tem uma calculadora: você digita o valor de algo que quer comprar e vê quantas horas de trabalho ele custa, e quantas horas da **sobra** do mês (depois dos fixos).
+
+Para funcionar:
+
+1. Lance o salário de cada pessoa como entrada com a categoria **Salário**.
+2. Em **Ajustes → Pessoas**, preencha as horas de trabalho por mês (44h por semana = 220; 40h = 200).
+
+## IA (Assistente)
+
+Veja o passo a passo em `ia/LEIAME.md`.
+
 ## Atualizar o app depois
 
 Quando houver uma versão nova do `index.html`, suba o arquivo de novo no GitHub (**Add file → Upload files**, ele substitui o antigo). Os celulares pegam a versão nova na próxima vez que abrirem o app com internet. Os dados não são afetados.
