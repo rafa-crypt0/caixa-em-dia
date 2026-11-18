@@ -3,40 +3,110 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
-    function isMember(cid) {
-      return signedIn() && request.auth.uid in get(/databases/$(database)/documents/casas/$(cid)).data.membros;
-    }
+    function me() { return request.auth.uid; }
+
+    /* ---- casa: dono, papéis e quem vê o quê ----
+       dono: quem criou a casa (casas antigas sem o campo: o primeiro da lista de membros).
+       papeis: { uid: 'editor' | 'leitor' | 'dep' }   (sem papel = editor)
+       verTudo: { uid: true }  dependente que o dono liberou para ver tudo */
+    function casaDe(cid) { return get(/databases/$(database)/documents/casas/$(cid)).data; }
+    function donoDe(c) { return c.get('dono', c.membros[0]); }
+    function papelDe(c) { return me() == donoDe(c) ? 'dono' : c.get('papeis', {}).get(me(), 'editor'); }
+    function membroDe(c) { return signedIn() && me() in c.membros; }
+    function veTudo(c) { return papelDe(c) != 'dep' || c.get('verTudo', {}).get(me(), false) == true; }
+    function lanca(c) { return papelDe(c) in ['dono', 'editor', 'dep']; }
 
     // Cada pessoa só vê o próprio cadastro (em qual casa ela está).
     match /usuarios/{uid} {
-      allow read, write: if signedIn() && request.auth.uid == uid;
+      allow read, write: if signedIn() && me() == uid;
     }
 
-    // Códigos de convite: quem está na casa cria; quem tem o código consegue ler só aquele.
+    // Convites: só o dono cria. Quem tem o código consegue ler só aquele. O código é de uso único.
     match /convites/{code} {
       allow get: if signedIn();
-      allow create: if isMember(request.resource.data.casa) && request.resource.data.expira is timestamp;
-      allow delete: if isMember(resource.data.casa);
+      allow create: if signedIn()
+        && donoDe(casaDe(request.resource.data.casa)) == me()
+        && request.resource.data.expira is timestamp
+        && request.resource.data.papel in ['editor', 'leitor', 'dep'];
+      allow delete: if signedIn() && (
+        donoDe(casaDe(resource.data.casa)) == me()
+        // quem acabou de entrar apaga o código no mesmo passo
+        || (me() in getAfter(/databases/$(database)/documents/casas/$(resource.data.casa)).data.membros
+            && getAfter(/databases/$(database)/documents/casas/$(resource.data.casa)).data.convite == code));
     }
 
     match /casas/{cid} {
       function joiningWithInvite() {
         let conv = get(/databases/$(database)/documents/convites/$(request.resource.data.convite));
-        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['membros', 'nomes', 'convite'])
-          && request.resource.data.membros.toSet().difference(resource.data.membros.toSet()) == [request.auth.uid].toSet()
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['membros', 'nomes', 'convite', 'papeis'])
+          && request.resource.data.membros.toSet().difference(resource.data.membros.toSet()) == [me()].toSet()
           && request.resource.data.membros.size() == resource.data.membros.size() + 1
-          && request.resource.data.nomes.diff(resource.data.nomes).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.nomes.diff(resource.data.get('nomes', {})).affectedKeys().hasOnly([me()])
+          && request.resource.data.get('papeis', {}).diff(resource.data.get('papeis', {})).affectedKeys().hasOnly([me()])
+          && request.resource.data.get('papeis', {}).get(me(), 'editor') == conv.data.get('papel', 'editor')
           && conv.data.casa == cid
-          && conv.data.expira > request.time;
+          && conv.data.expira > request.time
+          && !existsAfter(/databases/$(database)/documents/convites/$(request.resource.data.convite));
+      }
+      function donoAlterando() {
+        return me() == donoDe(resource.data)
+          && donoDe(request.resource.data) == me()
+          && me() in request.resource.data.membros;
+      }
+      // qualquer membro pode trocar o próprio nome ou sair da casa
+      function membroSoDeSi() {
+        let ks = request.resource.data.diff(resource.data).affectedKeys();
+        return me() in resource.data.membros && me() != donoDe(resource.data) && (
+          (ks.hasOnly(['nomes']) && request.resource.data.nomes.diff(resource.data.nomes).affectedKeys().hasOnly([me()]))
+          || (ks.hasOnly(['membros', 'nomes', 'papeis', 'verTudo'])
+              && request.resource.data.membros.toSet() == resource.data.membros.toSet().difference([me()].toSet())));
       }
 
-      allow read: if signedIn() && request.auth.uid in resource.data.membros;
-      allow create: if signedIn() && request.resource.data.membros == [request.auth.uid];
-      allow update: if signedIn() && (request.auth.uid in resource.data.membros || joiningWithInvite());
+      allow read: if signedIn() && me() in resource.data.membros;
+      allow create: if signedIn() && request.resource.data.membros == [me()] && request.resource.data.dono == me();
+      allow update: if signedIn() && (donoAlterando() || membroSoDeSi() || joiningWithInvite());
 
-      // Lançamentos, contas, cartões etc.: só quem está na casa.
+      /* ---- lançamentos, contas, cartões etc. ----
+         Configuração da casa (cfg, pes, cta, car): só o dono muda, com três exceções pequenas.
+         Todo o resto tem autor (campo "by"). Só o autor altera ou apaga.
+         Os outros só podem deixar um pedido (campo "ped") que o autor aprova ou recusa. */
       match /{colecao}/{resto=**} {
-        allow read, write: if isMember(cid);
+        function C() { return casaDe(cid); }
+        function cfgTipo(t) { return t in ['cfg', 'pes', 'cta', 'car']; }
+        function autor(d) { return d.get('by', null) == null ? donoDe(C()) : d.by; }
+        function mudou() { return request.resource.data.diff(resource.data).affectedKeys(); }
+        function apagando() { return C().get('apagando', false) == true && papelDe(C()) == 'dono'; }
+
+        allow read: if membroDe(C()) && (veTudo(C()) || cfgTipo(resource.data.t) || resource.data.by == me());
+
+        allow create: if membroDe(C()) && (
+          apagando()  // restauração de backup pelo dono
+          || (cfgTipo(request.resource.data.t)
+              ? (papelDe(C()) == 'dono'
+                 // cada um se liga à própria pessoa ao entrar
+                 || (request.resource.data.t == 'pes' && request.resource.data.uid == me()))
+              : (lanca(C()) && request.resource.data.by == me() && !('ped' in request.resource.data))));
+
+        allow update: if membroDe(C()) && request.resource.data.t == resource.data.t && (
+          cfgTipo(resource.data.t)
+            ? (papelDe(C()) == 'dono'
+               || (resource.data.t == 'cfg' && lanca(C()) && mudou().hasOnly(['reduce']))
+               || (resource.data.t == 'pes' && resource.data.get('uid', null) == null && request.resource.data.uid == me() && mudou().hasOnly(['uid']))
+               || (resource.data.t == 'pes' && resource.data.get('uid', null) == me() && mudou().hasOnly(['name', 'horas'])))
+            : (
+              // o autor muda o que quiser, sem trocar o autor
+              (autor(resource.data) == me() && lanca(C())
+                && request.resource.data.get('by', null) in [resource.data.get('by', null), me()])
+              // outro membro deixa (ou retira) o próprio pedido
+              || (papelDe(C()) in ['dono', 'editor'] && mudou().hasOnly(['ped'])
+                  && ((('ped' in request.resource.data) && request.resource.data.ped.por == me())
+                      || (!('ped' in request.resource.data) && resource.data.ped.por == me())))
+              // o dono tira uma pessoa removida dos lançamentos
+              || (papelDe(C()) == 'dono' && mudou().hasOnly(['personId']) && request.resource.data.personId == '')));
+
+        allow delete: if membroDe(C()) && (
+          apagando()
+          || (cfgTipo(resource.data.t) ? papelDe(C()) == 'dono' : (autor(resource.data) == me() && lanca(C()))));
       }
     }
   }

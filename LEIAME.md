@@ -75,6 +75,25 @@ O app abre em tela cheia, com ícone próprio, e funciona sem internet. O que fo
 
 ---
 
+## Quem pode o quê na casa
+
+Quem cria a casa é o **dono**. Ao gerar um convite (em **Ajustes**), o dono escolhe o papel da pessoa e pode trocar depois:
+
+| Papel | Vê | Lança | Observação |
+|---|---|---|---|
+| **Dono** | tudo | sim | convida e remove pessoas, muda contas, cartões e pessoas, apaga tudo ou restaura backup |
+| **Editor** | tudo | sim | ex.: o casal |
+| **Só leitura** | tudo | não | |
+| **Dependente** | só o que ele lançou | sim | ex.: filhos. O dono pode marcar "pode ver tudo" |
+
+**Ninguém altera ou apaga o lançamento de outra pessoa sozinho, nem o dono.** Quem tenta fazer isso manda um **pedido**. O pedido aparece no Resumo de quem lançou, que toca em **Aprovar** ou **Recusar**.
+
+Essas regras ficam no banco (`firestore.rules`), não só no app. Mesmo que alguém altere o app, o banco recusa.
+
+Cada convite serve uma vez só e vence em 48 horas. **Sair da conta** apaga a cópia dos dados guardada naquele celular.
+
+**Recomendar o app** (em Ajustes) manda só o link. Quem recebe cria a própria casa e não vê os seus dados.
+
 ## Horas de trabalho
 
 Na aba **Resumo**, o quadro **Quanto custa em horas de trabalho** mostra, para cada pessoa, o salário, os fixos e parcelas, quanto sobra e quanto vale cada hora trabalhada. Também tem uma calculadora: você digita o valor de algo que quer comprar e vê quantas horas de trabalho ele custa, e quantas horas da **sobra** do mês (depois dos fixos).
@@ -89,6 +108,16 @@ Para funcionar:
 Veja o passo a passo em `ia/LEIAME.md`.
 
 ## Atualizar o app depois
+
+**Quando o `firestore.rules` mudar** (as notas da versão avisam), faça as duas coisas no mesmo momento:
+
+1. Publique o site novo (merge no GitHub ou upload do `index.html`).
+2. Logo em seguida, no Firebase, abra **Firestore Database → Regras**, apague tudo, cole o `firestore.rules` novo e clique em **Publicar**.
+
+Enquanto só uma das duas estiver atualizada, entrar na casa com convite e criar uma casa nova podem dar erro. O resto continua funcionando.
+
+### Só o index.html
+
 
 Quando houver uma versão nova do `index.html`, suba o arquivo de novo no GitHub (**Add file → Upload files**, ele substitui o antigo). Os celulares pegam a versão nova na próxima vez que abrirem o app com internet. Os dados não são afetados.
 

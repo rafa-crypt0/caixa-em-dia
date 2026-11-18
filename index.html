@@ -339,6 +339,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .tq{display:grid;gap:10px}
 .tq #tqOut{display:grid;gap:4px}
 .tag.hora{color:var(--accent)}
+.tag.ped{color:var(--bad)}
+.pedido{display:grid;gap:8px;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.members li{margin:2px 0}
+.memrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)}
+.memrow:last-child{border-bottom:0}
+.memrow .ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.memrow select{width:auto}
 .iachat{display:grid;gap:10px}
 .iaans{white-space:pre-wrap;line-height:1.5;margin:0}
 .iarow{display:flex;gap:8px;flex-wrap:wrap}
@@ -411,7 +418,22 @@ const CUTS={ess:{l:'Essencial',h:'não dá para cortar',c:'--c-ess'},com:{l:'Com
 const CAT_CUT={'Moradia':'ess','Contas da casa':'ess','Mercado':'ess','Saúde':'ess','Transporte':'red','Telefone/Internet':'red','Educação':'red','Assinaturas':'cor','Lanche/Delivery':'cor','Compras online':'cor','Vestuário':'cor','Beleza':'red','Casa':'red','Lazer':'cor','Pix crédito':'cor','Presentes':'red','Tarifas e juros':'cor','Consórcio/Empréstimo':'com'};
 const RED_DEFAULT={'Lanche/Delivery':.6,'Assinaturas':.5,'Compras online':.7,'Vestuário':.6,'Lazer':.5,'Tarifas e juros':1,'Transporte':.15,'Telefone/Internet':.2,'Beleza':.3,'Casa':.3,'Educação':.1};
 const EXP={fix:1,var:1,loan:1,fd:1};
-const RO_MSG='Você pode ver, mas não lançar. Peça para quem criou o app te convidar como Editor.';
+const RO_MSG='Você pode ver, mas não lançar. Peça ao dono da casa para mudar o seu papel.';
+/* papéis na casa: dono (quem criou), editor, leitor (só vê) e dep (dependente: vê só o que lançou, a não ser que o dono libere) */
+const PAPEIS={dono:'Dono',editor:'Editor',leitor:'Só leitura',dep:'Dependente'};
+const CFGT={cfg:1,pes:1,cta:1,car:1};
+const donoUid=()=>S.casa?(S.casa.dono||(S.casa.membros||[])[0]):null;
+const papelDe=uid=>!S.casa?'dono':uid===donoUid()?'dono':(S.casa.papeis?.[uid]||'editor');
+const papel=()=>S.casa&&S.cid?papelDe(S.me):'dono';
+const isDono=()=>papel()==='dono';
+const veTudo=()=>papel()!=='dep'||!!S.casa?.verTudo?.[S.me];
+const autorDe=r=>r.by||donoUid()||S.me;
+const souAutor=r=>S.mode!=='db'||!r||!!CFGT[r.t]||autorDe(r)===S.me;
+const nomeDe=uid=>uid===S.me?'você':(S.names[uid]||'alguém da casa');
+function syncPapel(){
+  S.ro=papel()==='leitor';
+  const v=veTudo();if(S.veTudo0!==undefined&&S.veTudo0!==v&&DB.db)resubscribe();S.veTudo0=v;
+}
 
 /* ---------- estado ---------- */
 const S={recs:{},st:null,mode:'demo',month:curYM(),tab:'resumo',f:{kind:'all',cut:null,person:null,pay:null,cat:null,q:''},
@@ -714,6 +736,10 @@ function rebuild(){S.st=buildState(S.recs);invalidate();scheduleRender();resolve
 function stamp(r){r={...r};if(!r.id)r.id=uid();if(!r.c)r.c=Date.now();if(S.me&&!r.by&&S.mode!=='demo')r.by=S.me;return r}
 function put(r,msg){
   if(S.ro&&S.mode!=='demo'){toast(RO_MSG);return false}
+  const o=r.id&&S.recs[r.id];if(o&&!souAutor(o))return pedir(o,'edit',r);
+  return putRaw(r,msg);
+}
+function putRaw(r,msg){
   r=stamp(r);const old=S.recs[r.id];S.recs[r.id]=r;rebuild();if(msg)toast(msg);
   if(S.mode==='local')saveLocal();
   else if(S.mode==='db'&&DB.db){const p=recPath(r),op=old?recPath(old):null;if(op&&op!==p)dbDel(op);ensureSub(subKey(p));delete DB.pd[r.id];DB.pw[r.id]=r;dbSet(p,body(r)).finally(()=>{if(DB.pw[r.id]===r)delete DB.pw[r.id]})}
@@ -721,8 +747,39 @@ function put(r,msg){
 }
 function drop(id,msg){
   if(S.ro&&S.mode!=='demo'){toast(RO_MSG);return}
+  const o=S.recs[id];if(o&&!souAutor(o))return pedir(o,'del');
+  dropRaw(id,msg);
+}
+function dropRaw(id,msg){
   const old=S.recs[id];if(!old)return;delete S.recs[id];rebuild();if(msg)toast(msg);
   if(S.mode==='local')saveLocal();else if(S.mode==='db'&&DB.db){delete DB.pw[id];DB.pd[id]=1;dbDel(recPath(old)).finally(()=>{delete DB.pd[id]})}
+}
+/* ---------- pedidos: só quem lançou altera ou apaga; os outros pedem ---------- */
+const SKIPK={id:1,c:1,by:1,ped:1};
+function pedir(o,tipo,novo){
+  if(papel()!=='dono'&&papel()!=='editor'){toast('Só quem lançou pode mudar isso.');return false}
+  let mud=null;
+  if(tipo==='edit'){mud={};for(const k of new Set([...Object.keys(o),...Object.keys(novo)])){if(SKIPK[k])continue;const a=o[k]===undefined?null:o[k],b=novo[k]===undefined?null:novo[k];if(JSON.stringify(a)!==JSON.stringify(b))mud[k]=b}
+    if(!Object.keys(mud).length){toast('Nada mudou.');return false}}
+  putRaw({...o,ped:{tipo,por:S.me,em:Date.now(),...(mud?{novo:mud}:{})}});
+  toast(`Pedido enviado. ${nomeDe(autorDe(o))} precisa aprovar.`);
+  return true;
+}
+function pedOk(id){const r=S.recs[id];if(!r||!r.ped)return;const p=r.ped;
+  if(p.tipo==='del'){dropRaw(id,'Pedido aprovado: lançamento apagado.');return}
+  const n={...r,...(p.novo||{})};delete n.ped;putRaw(n,'Pedido aprovado: lançamento alterado.')}
+function pedNo(id,msg){const r=S.recs[id];if(!r||!r.ped)return;const n={...r};delete n.ped;putRaw(n,msg||'Pedido recusado.')}
+const PEDK={amount:'valor',total:'valor total',desc:'descrição',cat:'categoria',date:'data',pay:'pagamento',personId:'pessoa',day:'dia',cut:'dá para cortar',inst:'parcelas',refund:'devolução',from:'a partir de',to:'até',accountId:'conta',bill:'mês da fatura'};
+function pedVal(k,v){if(v==null||v==='')return'—';if(k==='amount'||k==='total')return money(v);if(k==='date')return fDY(v);if(k==='personId')return pname(v);if(k==='pay')return pay(v)?.name||'—';if(k==='accountId')return acc(v)?.name||'—';if(k==='cut')return CUTS[v]?.l||'—';if(k==='inst')return `${v.cur}/${v.tot}`;if(k==='refund')return `${v.who||''} ${money(v.amount)}`;if(typeof v==='object')return'…';return String(v)}
+function recTitulo(r){const v=r.amount??r.total??r.parcela;return `${esc(r.desc||r.name||({mes:'Fechamento do mês '+(r.ym?ymL(r.ym):''),con:'Conferência de saldo',fat:'Fatura paga',tra:'Transferência',mov:'Movimento de investimento'})[r.t]||'Lançamento')}${v!=null&&+v?` · <span class="num">${money(v)}</span>`:''}${r.date?` · ${fDY(r.date)}`:''}`}
+function pedidosPanel(){
+  if(S.mode!=='db')return'';
+  const L=Object.values(S.recs).filter(r=>r.ped&&(autorDe(r)===S.me||r.ped.por===S.me));if(!L.length)return'';
+  return `<section class="panel pedidos"><div class="panel-h"><h2>Pedidos</h2><span class="small muted">só quem lançou pode alterar ou apagar</span></div><div class="stack" style="gap:10px">${L.map(r=>{
+    const p=r.ped,meu=autorDe(r)===S.me,acao=p.tipo==='del'?'apagar':'alterar';
+    const ch=p.tipo==='edit'&&p.novo?`<ul class="small" style="margin:4px 0 0;padding-left:18px">${Object.entries(p.novo).map(([k,v])=>`<li>${esc(PEDK[k]||k)}: ${esc(pedVal(k,r[k]))} → <b>${esc(pedVal(k,v))}</b></li>`).join('')}</ul>`:'';
+    return `<div class="pedido"><div><b>${esc(meu?nomeDe(p.por):'Você')}</b> ${meu?'pediu':'pediu'} para <b>${acao}</b>: ${recTitulo(r)}${meu?'':` <span class="muted">· aguardando ${esc(nomeDe(autorDe(r)))}</span>`}${ch}</div>
+      <div class="btnrow">${meu?`<button class="btn sm primary" data-act="pedok" data-id="${r.id}">Aprovar</button><button class="btn sm" data-act="pedno" data-id="${r.id}">Recusar</button>`:`<button class="btn sm" data-act="pedcancel" data-id="${r.id}">Cancelar pedido</button>`}</div></div>`}).join('')}</div></section>`;
 }
 let SAVING=0;
 const progToast=(d,t)=>{if(d===1||d%10===0||d===t)toast(`Salvando no banco… ${d} de ${t}. Não feche o app.`)};
@@ -741,23 +798,33 @@ function dbOp(path,fn){
 const dbSet=(path,data)=>dbOp(path,()=>DB.db.doc(path).set(data));
 const dbDel=path=>dbOp(path,()=>DB.db.doc(path).delete());
 let failT=0;
-function dbFail(e){const c=e&&e.code;
+function dbFail(e){const c=e&&e.code;setTimeout(()=>{if(DB.db)mergeSubs()},50);
   if(c==='resource-exhausted')toast('O limite gratuito do dia acabou. Amanhã volta ao normal.');
   else if(c==='permission-denied')toast('Sem permissão para salvar. Confira se você ainda está na casa.');
   else if(Date.now()-failT>5000){failT=Date.now();toast('Não consegui salvar agora. Confira a internet e lance de novo se o item sumir.')}
 }
+/* quem vê tudo lê a coleção inteira; o dependente lê só a configuração da casa e o que ele lançou */
+function qParts(key){const c=DB.db.collection(key);if(veTudo())return[c];
+  const mine=c.where('by','==',S.me);return key==='casa'?[c.where('t','in',Object.keys(CFGT)),mine]:[mine]}
 function ensureSub(key){
   if(!DB.db||DB.unsubs[key])return;
-  DB.unsubs[key]=DB.db.collection(key).onSnapshot(s=>onSnap(key,s),e=>{delete DB.unsubs[key];if(e&&e.code==='unavailable')setTimeout(()=>ensureSub(key),3000)});
+  const qs=qParts(key),parts=new Array(qs.length).fill(null);
+  const offs=qs.map((q,i)=>q.onSnapshot(s=>{
+      const map={};for(const d of s.docs){const b=fromFS(d.data());if(b&&b.t)map[d.id]={...b,id:d.id}}
+      parts[i]=map;if(parts.some(x=>x===null))return;
+      onSnap(key,Object.assign({},...parts),s.metadata.fromCache)},
+    e=>{if(DB.unsubs[key]===off){off();delete DB.unsubs[key];if(e&&e.code==='unavailable')setTimeout(()=>ensureSub(key),3000)}}));
+  const off=()=>offs.forEach(f=>{try{f()}catch(e){}});
+  DB.unsubs[key]=off;
 }
+function resubscribe(){for(const f of Object.values(DB.unsubs))try{f()}catch(e){}DB.unsubs={};DB.subs={};subscribeAll()}
 function subscribeAll(){
   ensureSub('casa');const sy=+S.st.start.slice(0,4),cy=+curYM().slice(0,4);
   for(let y=Math.min(sy,cy)-2;y<=cy+1;y++)ensureSub(`ano/${y}/reg`);
 }
-function onSnap(key,snap){
-  const map={};for(const d of snap.docs){const b=fromFS(d.data());if(b&&b.t)map[d.id]={...b,id:d.id}}
+function onSnap(key,map,fromCache){
   DB.subs[key]=map;
-  if(key==='casa'&&!snap.metadata.fromCache&&!S.dbChecked){S.dbChecked=true;scheduleRender()}
+  if(key==='casa'&&!fromCache&&!S.dbChecked){S.dbChecked=true;scheduleRender()}
   mergeSubs();
 }
 function mergeSubs(){
@@ -827,8 +894,9 @@ async function enterCasa(cid,seq){
   try{const d=await FB.fs.doc('casas/'+cid).get();if(!d.exists||!(d.data().membros||[]).includes(S.me))return false;casa=d.data()}
   catch(e){if(e&&e.code==='permission-denied')return false;/* sem internet: segue com o que está guardado no aparelho */}
   if(seq!=null&&seq!==userSeq)return true;
-  S.cid=cid;S.casa=casa;S.names=casa?.nomes||{};lsSet(LSC(S.me),cid);
-  DB.casaUnsub=FB.fs.doc('casas/'+cid).onSnapshot(d=>{const b=d.data();if(!b)return;S.casa=b;S.names=b.nomes||{};scheduleRender()},
+  S.cid=cid;S.casa=casa;S.names=casa?.nomes||{};lsSet(LSC(S.me),cid);S.veTudo0=undefined;syncPapel();
+  if(casa&&!casa.dono&&(casa.membros||[])[0]===S.me)FB.fs.doc('casas/'+cid).update({dono:S.me}).catch(()=>{});
+  DB.casaUnsub=FB.fs.doc('casas/'+cid).onSnapshot(d=>{const b=d.data();if(!b)return;S.casa=b;S.names=b.nomes||{};syncPapel();scheduleRender()},
     e=>{if(e&&e.code==='permission-denied'&&S.cid===cid){lsDel(LSC(S.me));toast('Você não está mais nesta casa.');stopAll();S.phase='casa';render()}});
   S.phase='app';S.month=curYM();S.tab='resumo';render();
   openCasa(cid);
@@ -837,9 +905,10 @@ async function enterCasa(cid,seq){
 async function openCasa(cid){
   const root=`casas/${cid}/`;
   DB.db={collection:p=>FB.fs.collection(root+p),doc:p=>FB.fs.doc(root+p)};
-  try{const casa=await DB.db.collection('casa').get({source:'server'});
+  try{const snaps=await Promise.all(qParts('casa').map(q=>q.get({source:'server'})));
     if(S.cid!==cid)return;
-    if(!casa.empty){const map={};for(const d of casa.docs){const b=fromFS(d.data());if(b&&b.t)map[d.id]={...b,id:d.id}}DB.subs.casa=map;S.mode='db';S.recs={...map};rebuild()}
+    const map={};for(const sn of snaps)for(const d of sn.docs){const b=fromFS(d.data());if(b&&b.t)map[d.id]={...b,id:d.id}}
+    if(Object.keys(map).length){DB.subs.casa=map;S.mode='db';S.recs={...map};rebuild()}
     S.dbChecked=true;linkMe();
   }catch(e){/* sem internet: os dados chegam pelo que está guardado no aparelho */}
   if(S.cid!==cid)return;
@@ -848,7 +917,7 @@ async function openCasa(cid){
 async function createCasa(nome){
   const nm=gateName();
   const ref=FB.fs.collection('casas').doc();
-  await ref.set({nome,membros:[S.me],nomes:{[S.me]:nm},criada:Date.now()});
+  await ref.set({nome,membros:[S.me],dono:S.me,nomes:{[S.me]:nm},criada:Date.now()});
   await FB.fs.doc('usuarios/'+S.me).set({casa:ref.id,nome:nm});
   await enterCasa(ref.id);
 }
@@ -858,30 +927,58 @@ async function joinCasa(code){
   const inv=await FB.fs.doc('convites/'+code).get();
   if(!inv.exists)throw{code:'codigo'};
   const v=inv.data();if(v.expira&&v.expira.toMillis()<Date.now())throw{code:'vencido'};
-  await FB.fs.doc('casas/'+v.casa).update({membros:firebase.firestore.FieldValue.arrayUnion(S.me),['nomes.'+S.me]:nm,convite:code});
+  /* entra e gasta o código no mesmo passo: o banco não deixa usar o convite duas vezes */
+  const b=FB.fs.batch();
+  b.update(FB.fs.doc('casas/'+v.casa),{membros:firebase.firestore.FieldValue.arrayUnion(S.me),['nomes.'+S.me]:nm,['papeis.'+S.me]:v.papel||'editor',convite:code});
+  b.delete(FB.fs.doc('convites/'+code));
+  await b.commit();
   await FB.fs.doc('usuarios/'+S.me).set({casa:v.casa,nome:nm});
-  FB.fs.doc('convites/'+code).delete().catch(()=>{});
   try{history.replaceState(null,'',location.pathname)}catch(e){}
   await enterCasa(v.casa);
 }
 function gateName(){const v=($('#g-meunome')?.value||'').trim()||S.uname;if(!v)throw{code:'nome'};S.uname=v;return v}
 const CODE_AB='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 async function mkInvite(btn){
-  if(!FB||!S.cid)return;btn&&(btn.disabled=true);
-  const r=crypto.getRandomValues(new Uint32Array(6)),code=[...r].map(x=>CODE_AB[x%CODE_AB.length]).join('');
+  if(!FB||!S.cid)return;if(!isDono())return toast('Só o dono da casa convida pessoas.');btn&&(btn.disabled=true);
+  const pp=$('#inv-papel')?.value||'editor',papelInv=PAPEIS[pp]&&pp!=='dono'?pp:'editor';
+  const r=crypto.getRandomValues(new Uint32Array(8)),code=[...r].map(x=>CODE_AB[x%CODE_AB.length]).join('');
   const exp=new Date(Date.now()+48*3600e3);
-  try{await FB.fs.doc('convites/'+code).set({casa:S.cid,expira:firebase.firestore.Timestamp.fromDate(exp),criadoPor:S.me});
-    S.invite={code,ate:`${pad(exp.getDate())}/${pad(exp.getMonth()+1)} às ${pad(exp.getHours())}:${pad(exp.getMinutes())}`};render()}
+  try{await FB.fs.doc('convites/'+code).set({casa:S.cid,expira:firebase.firestore.Timestamp.fromDate(exp),criadoPor:S.me,papel:papelInv});
+    S.invite={code,papel:papelInv,ate:`${pad(exp.getDate())}/${pad(exp.getMonth()+1)} às ${pad(exp.getHours())}:${pad(exp.getMinutes())}`};render()}
   catch(e){toast('Não consegui gerar o código. Confira a internet.');btn&&(btn.disabled=false)}
 }
 const appLink=()=>location.origin+location.pathname;
+/* ---------- membros (só o dono) ---------- */
+const casaRef=()=>FB.fs.doc('casas/'+S.cid);
+const casaErr=()=>toast('Não consegui salvar agora. Confira a internet.');
+function setPapel(uid,v){if(!isDono()||!PAPEIS[v]||v==='dono')return;casaRef().update({['papeis.'+uid]:v}).then(()=>toast(`${S.names[uid]||'Pessoa'} agora é ${PAPEIS[v]}.`),casaErr)}
+function setVerTudo(uid,on){if(!isDono())return;casaRef().update({['verTudo.'+uid]:on}).then(()=>toast(on?'Agora vê os lançamentos de todos.':'Agora vê só o que lançou.'),casaErr)}
+function remMembro(uid){if(!isDono()||uid===S.me)return;const F=firebase.firestore.FieldValue;
+  casaRef().update({membros:F.arrayRemove(uid),['nomes.'+uid]:F.delete(),['papeis.'+uid]:F.delete(),['verTudo.'+uid]:F.delete()}).then(()=>toast('Removida da casa. Os lançamentos dela continuam aqui.'),casaErr)}
+async function sairDaCasa(){if(isDono()||!S.cid)return;const F=firebase.firestore.FieldValue;
+  try{await casaRef().update({membros:F.arrayRemove(S.me),['nomes.'+S.me]:F.delete(),['papeis.'+S.me]:F.delete(),['verTudo.'+S.me]:F.delete()});
+    await FB.fs.doc('usuarios/'+S.me).set({casa:null,nome:S.uname||''});lsDel(LSC(S.me));stopAll();S.phase='casa';render();toast('Você saiu da casa.')}catch(e){casaErr()}}
+async function recomendar(){
+  const url=appLink(),text='Estou usando o Caixa em Dia para controlar os gastos de casa e vendo quanto cada compra custa em horas de trabalho. É grátis:';
+  if(navigator.share){try{await navigator.share({title:'Caixa em Dia',text,url});return}catch(e){if(e&&e.name==='AbortError')return}}
+  window.open('https://wa.me/?text='+encodeURIComponent(text+' '+url),'_blank','noopener');
+}
+/* sair da conta apaga a cópia dos dados guardada neste aparelho */
+async function sairDaConta(){
+  const limpaLS=()=>{try{for(const k of Object.keys(localStorage))if(k.startsWith('caixa-em-dia:casa:')||k.startsWith('firestore_')||k===LS1||k===LS2)localStorage.removeItem(k)}catch(e){}};
+  limpaLS();
+  try{await FB.auth.signOut()}catch(e){}
+  const ate=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]);
+  try{await ate(FB.fs.terminate().then(()=>FB.fs.clearPersistence()),4000)}catch(e){}
+  limpaLS();location.reload();
+}
 const inviteText=()=>S.invite?`Entra no nosso Caixa em Dia: ${appLink()}?c=${S.invite.code}\nSe pedir, o código é ${S.invite.code} (vale até ${S.invite.ate}).`:'';
 function authMsg(e){const c=(e&&e.code)||'';
   if(/invalid-credential|wrong-password|user-not-found|invalid-login/.test(c))return 'E-mail ou senha errados.';
   if(/invalid-email/.test(c))return 'Esse e-mail não parece certo.';
   if(/missing-password/.test(c))return 'Digite a senha.';
   if(/email-already-in-use/.test(c))return 'Já existe uma conta com esse e-mail. Toque em "Já tenho conta" e entre.';
-  if(/weak-password/.test(c))return 'A senha precisa ter pelo menos 6 caracteres.';
+  if(/weak-password|password-does-not-meet-requirements/.test(c))return 'Senha fraca. Use pelo menos 8 caracteres, com letras e números.';
   if(/too-many-requests/.test(c))return 'Muitas tentativas seguidas. Espere alguns minutos.';
   if(/network-request-failed|unavailable/.test(c))return 'Sem internet. Confira a conexão e tente de novo.';
   if(c==='nome')return 'Diga seu nome.';
@@ -916,7 +1013,7 @@ function vGate(){
       <h2>${title}</h2>
       ${m==='signup'?`<label class="fld"><span>Seu nome</span><input id="g-nome" name="nome" autocomplete="given-name" placeholder="Como a casa te chama" value="${esc(S.uname)}"></label>`:''}
       <label class="fld"><span>E-mail</span><input id="g-email" name="email" type="email" autocomplete="email" inputmode="email" required></label>
-      ${m!=='forgot'?`<label class="fld"><span>Senha</span><input id="g-senha" name="senha" type="password" autocomplete="${m==='signup'?'new-password':'current-password'}" minlength="6" required>${m==='signup'?'<span class="help">Pelo menos 6 caracteres.</span>':''}</label>`:'<p class="help">Enviamos um link para você criar uma senha nova.</p>'}
+      ${m!=='forgot'?`<label class="fld"><span>Senha</span><input id="g-senha" name="senha" type="password" autocomplete="${m==='signup'?'new-password':'current-password'}" minlength="${m==='signup'?8:6}" required>${m==='signup'?'<span class="help">Pelo menos 8 caracteres, com letras e números.</span>':''}</label>`:'<p class="help">Enviamos um link para você criar uma senha nova.</p>'}
       <p class="err" role="alert"></p>
       <button type="submit" class="btn primary" style="justify-content:center">${m==='signup'?'Criar conta':m==='forgot'?'Enviar link':'Entrar'}</button>
       <div class="btnrow" style="justify-content:space-between">${m==='login'?'<button type="button" class="link" data-act="authmode" data-v="signup">Criar conta</button><button type="button" class="link" data-act="authmode" data-v="forgot">Esqueci a senha</button>':'<button type="button" class="link" data-act="authmode" data-v="login">Já tenho conta</button>'}</div>
@@ -953,7 +1050,7 @@ function setSave(){const el=$('#saveState');
   else{el.className='save';el.textContent='Só neste aparelho'}
   $('#fab').hidden=(S.ro&&S.mode!=='demo')||S.phase!=='app';}
 function topBanner(){
-  if(S.mode==='demo')return `<div class="banner"><p><b>Isto é um exemplo</b> com uma família fictícia (Ana e Beto). Mexa à vontade: nada é salvo enquanto for exemplo.${!S.dbChecked?' <b>Procurando os dados da casa…</b>':DB.db?' Se alguém da casa já usa o app, os dados dela aparecem aqui sozinhos.':''}</p>${S.ro||!S.dbChecked?'':'<button class="btn primary" data-act="fresh">Começar com meus dados</button><button class="btn" data-act="keepdemo">Usar o exemplo como base</button>'}</div>`;
+  if(S.mode==='demo')return `<div class="banner"><p><b>Isto é um exemplo</b> com uma família fictícia (Ana e Beto). Mexa à vontade: nada é salvo enquanto for exemplo.${!S.dbChecked?' <b>Procurando os dados da casa…</b>':DB.db?' Se alguém da casa já usa o app, os dados dela aparecem aqui sozinhos.':''}</p>${S.ro||!S.dbChecked||!isDono()?'':'<button class="btn primary" data-act="fresh">Começar com meus dados</button><button class="btn" data-act="keepdemo">Usar o exemplo como base</button>'}</div>`;
   if(S.ro)return `<div class="banner info"><p>${RO_MSG}</p></div>`;
   return'';
 }
@@ -1129,7 +1226,7 @@ function vResumo(){
     <span class="small" id="qo-tempo" style="color:var(--accent)" aria-live="polite"></span>
     <button class="btn out-btn" data-act="qout" ${ro?'disabled':''}>✓ Adicionar saída</button>
     <button class="link" data-act="qmore" style="justify-self:start">Parcelado ou outra pessoa vai pagar? Abrir formulário completo</button></div></div>`;
-  return `${alertas(m)}
+  return `${alertas(m)}${pedidosPanel()}
   <section class="resumo-top">${inC}<div class="panel donutbox" style="justify-content:flex-start"><h2 style="align-self:flex-start">Saldo de ${ymL(m)}</h2>${panorama(m)}</div>${outC}</section>
   ${kpis(m)}
   ${iaPanel()}
@@ -1262,7 +1359,7 @@ function lineRow(l){
   const ref=l.refund?`<span class="tag" style="color:var(--accent)">${esc(l.refund.who)} ${l.refund.received?'devolveu':'deve'} ${money(l.refund.amount)}</span>`:'';
   const amt=l.kind==='tr'?`<span class="a num mv">⇄ ${money(l.amount)}</span>`:`<span class="a num ${l.dir>0?'in':''}">${l.dir>0?'+ ':''}${money(l.amount)}</span>`;
   const extra=l.kind==='fd'?` data-card="${l.src.card}" data-ym="${l.src.ym}"`:'';
-  return `<button class="row-i" data-act="edit" data-kind="${l.kind}" data-id="${l.src.id}"${extra}><span class="d">${esc(l.desc)}</span>${amt}<span class="m">${meta.join(' · ')} ${cutTag(EXP[l.kind]?l.cut:null)} ${instTag(l)} ${ref} ${whoTag(l.src)} ${horaTag(l)}</span></button>`;
+  return `<button class="row-i" data-act="edit" data-kind="${l.kind}" data-id="${l.src.id}"${extra}><span class="d">${esc(l.desc)}</span>${amt}<span class="m">${meta.join(' · ')} ${cutTag(EXP[l.kind]?l.cut:null)} ${instTag(l)} ${ref} ${whoTag(l.src)} ${horaTag(l)}${l.src&&l.src.ped?` <span class="tag ped">pedido: ${l.src.ped.tipo==='del'?'apagar':'alterar'}</span>`:''}</span></button>`;
 }
 function horaTag(l){
   if(!tempoOn()||(l.kind!=='var'&&l.kind!=='fix'))return'';
@@ -1438,14 +1535,23 @@ function vRed(){
 
 /* ----- Ajustes ----- */
 function vAjustes(){
-  const st=S.st,dis=S.ro&&S.mode!=='demo'?'disabled':'';
-  const ppl=st.people.map(p=>`<div class="setrow"><label class="fld"><span>Nome</span><input id="pn-${p.id}" value="${esc(p.name)}" data-set="1" data-id="${p.id}" data-f="name" ${dis}></label><label class="fld"><span>Horas de trabalho por mês</span><input id="ph-${p.id}" type="number" min="1" max="744" step="1" inputmode="numeric" placeholder="${HORAS_PADRAO}" value="${+p.horas>0?p.horas:''}" data-set="1" data-id="${p.id}" data-f="horas" data-num ${dis}></label><div><button class="btn sm danger" data-act="delset" data-id="${p.id}" ${dis}>Remover</button></div></div>`).join('');
+  /* contas, cartões, pessoas e início: só o dono muda. Cada um muda o próprio nome e as próprias horas. */
+  const st=S.st,dis=(S.ro&&S.mode!=='demo')||!isDono()?'disabled':'';
+  const disP=p=>dis&&!(p.uid&&p.uid===S.me&&!S.ro)?'disabled':'';
+  const ppl=st.people.map(p=>`<div class="setrow"><label class="fld"><span>Nome</span><input id="pn-${p.id}" value="${esc(p.name)}" data-set="1" data-id="${p.id}" data-f="name" ${disP(p)}></label><label class="fld"><span>Horas de trabalho por mês</span><input id="ph-${p.id}" type="number" min="1" max="744" step="1" inputmode="numeric" placeholder="${HORAS_PADRAO}" value="${+p.horas>0?p.horas:''}" data-set="1" data-id="${p.id}" data-f="horas" data-num ${disP(p)}></label><div><button class="btn sm danger" data-act="delset" data-id="${p.id}" ${dis}>Remover</button></div></div>`).join('');
   const accs=st.accounts.map(a=>`<div class="setrow"><label class="fld"><span>Nome</span><input id="an-${a.id}" value="${esc(a.name)}" data-set="1" data-id="${a.id}" data-f="name" ${dis}></label><label class="fld"><span>Tipo</span><select id="at-${a.id}" data-set="1" data-id="${a.id}" data-f="type" ${dis}><option value="banco" ${!isWallet(a)?'selected':''}>Conta no banco</option><option value="carteira" ${isWallet(a)?'selected':''}>Dinheiro vivo (carteira)</option></select></label><label class="fld"><span>De quem</span><select id="ap-${a.id}" data-set="1" data-id="${a.id}" data-f="personId" ${dis}><option value="">Os dois / casa</option>${st.people.map(p=>`<option value="${p.id}" ${a.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label class="fld"><span>Saldo no início (${ymL(st.start)})</span><input id="ai-${a.id}" inputmode="decimal" value="${moneyIn(a.initial)}" data-set="1" data-id="${a.id}" data-f="initial" data-money ${dis}></label><div><button class="btn sm danger" data-act="delset" data-id="${a.id}" ${dis}>Remover</button></div></div>`).join('');
   const crds=st.cards.map(c=>`<div class="cardrow"><div><b>${esc(c.name)}</b> <span class="small muted">· paga pela ${esc(acc(c.accountId)?.name||'—')}</span><br><span class="small">${cardRuleText(c)}</span><br><span class="small muted">${cardExample(c)}</span></div><button class="btn sm" data-act="edit" data-kind="car" data-id="${c.id}" ${dis}>Editar</button></div>`).join('');
   const where=S.mode==='demo'?'Você está no exemplo: nada é salvo.':'Os dados ficam no banco da casa (Firebase). O app funciona sem internet e envia tudo quando a conexão volta. Baixe um backup de vez em quando.';
-  const mem=(S.casa?.membros||[]).map(id=>`<li>${esc(S.names[id]||'Sem nome')}${id===S.me?' <span class="muted">(você)</span>':''}</li>`).join('');
-  const inv=S.invite?`<div class="calc" style="margin-top:12px"><span class="small">Código para entrar na casa, vale até ${S.invite.ate}:</span><span class="code">${S.invite.code}</span><div class="btnrow"><a class="btn sm primary" href="https://wa.me/?text=${encodeURIComponent(inviteText())}" target="_blank" rel="noopener">Enviar pelo WhatsApp</a><button class="btn sm" data-act="copyinv">Copiar convite</button></div><span class="help">O código serve uma vez. A pessoa abre o link, cria a conta dela e entra.</span></div>`:'';
-  const casaSec=`<section class="panel"><div class="panel-h"><h2>${esc(S.casa?.nome||'Sua casa')}</h2><span class="small muted">${esc(S.fb?.email||'')}</span></div><p class="help">Quem está na casa vê e lança nos mesmos dados, cada um no seu celular.</p><ul class="members">${mem}</ul>${inv}<div class="btnrow" style="margin-top:14px"><button class="btn" data-act="mkinvite">${S.invite?'Gerar outro código':'Convidar alguém da casa'}</button>${S.installEvt?'<button class="btn" data-act="install">Instalar no celular</button>':''}<button class="btn" data-act="logout">Sair da conta</button></div></section>`;
+  const dono=isDono();
+  const mem=(S.casa?.membros||[]).map(id=>{const pp=papelDe(id),nm=`<span><b>${esc(S.names[id]||'Sem nome')}</b>${id===S.me?' <span class="muted">(você)</span>':''}<br><span class="small muted">${PAPEIS[pp]}${pp==='dep'?(S.casa?.verTudo?.[id]?' · vê tudo':' · vê só o que lançou'):''}</span></span>`;
+    if(!dono||pp==='dono')return `<div class="memrow">${nm}</div>`;
+    return `<div class="memrow">${nm}<div class="ctl"><select data-papel="${id}" aria-label="Papel de ${esc(S.names[id]||'')}">${['editor','leitor','dep'].map(k=>`<option value="${k}" ${pp===k?'selected':''}>${PAPEIS[k]}</option>`).join('')}</select>${pp==='dep'?`<label class="check small"><input type="checkbox" data-vertudo="${id}" ${S.casa?.verTudo?.[id]?'checked':''}> pode ver tudo</label>`:''}<button class="btn sm danger" data-act="remmembro" data-uid="${id}">Remover</button></div></div>`}).join('');
+  const papelHelp=`<p class="help" style="margin:8px 0 0"><b>Editor</b> lança e vê tudo. <b>Só leitura</b> vê tudo e não lança. <b>Dependente</b> lança e vê só o que ele mesmo lançou, a não ser que você libere. Ninguém, nem o dono, apaga ou altera o lançamento de outra pessoa sem que ela aprove.</p>`;
+  const inv=S.invite?`<div class="calc" style="margin-top:12px"><span class="small">Código para entrar na casa como <b>${PAPEIS[S.invite.papel]||'Editor'}</b>, vale até ${S.invite.ate}:</span><span class="code">${S.invite.code}</span><div class="btnrow"><a class="btn sm primary" href="https://wa.me/?text=${encodeURIComponent(inviteText())}" target="_blank" rel="noopener">Enviar pelo WhatsApp</a><button class="btn sm" data-act="copyinv">Copiar convite</button></div><span class="help">O código serve uma vez. A pessoa abre o link, cria a conta dela e entra.</span></div>`:'';
+  const casaSec=`<section class="panel"><div class="panel-h"><h2>${esc(S.casa?.nome||'Sua casa')}</h2><span class="small muted">${esc(S.fb?.email||'')}</span></div><p class="help">Você é <b>${PAPEIS[papel()]}</b> desta casa.${dono?' Só você convida, remove pessoas e muda contas e cartões.':''}</p><div>${mem}</div>${dono?papelHelp:''}${inv}
+    ${dono?`<div class="setrow" style="margin-top:14px"><label class="fld"><span>Convidar como</span><select id="inv-papel"><option value="editor">Editor (lança e vê tudo)</option><option value="leitor">Só leitura</option><option value="dep">Dependente (filho)</option></select></label><div><button class="btn" data-act="mkinvite">${S.invite?'Gerar outro código':'Gerar convite'}</button></div></div>`:''}
+    <div class="btnrow" style="margin-top:14px"><button class="btn" data-act="recomendar">Recomendar o app</button>${S.installEvt?'<button class="btn" data-act="install">Instalar no celular</button>':''}<button class="btn" data-act="logout">Sair da conta</button>${!dono&&S.cid?'<button class="btn danger" data-act="sairdacasa">Sair desta casa</button>':''}</div>
+    <p class="help" style="margin:8px 0 0">"Recomendar" manda só o link do app: quem receber cria a própria casa, sem ver os seus dados.</p></section>`;
   const pr=S.pendingRestore?`<div class="banner bad" style="margin-top:12px"><p>O backup tem ${S.pendingRestore.length} registros. Restaurar troca tudo o que está aqui pelos dados do backup${S.mode==='db'?', para todos da casa':''}.</p><button class="btn danger" data-act="restore2">Substituir pelos dados do backup</button><button class="btn" data-act="restore0">Cancelar</button></div>`:'';
   return `${casaSec}
   <section class="panel"><div class="panel-h"><h2>Pessoas</h2><button class="btn sm" data-act="addset" data-what="pes" ${dis}>+ Pessoa</button></div><p class="help">As horas servem para mostrar quanto cada gasto custa em tempo de trabalho. O valor da hora sai das entradas com a categoria <b>Salário</b> de cada pessoa. Referência: 44 horas por semana = 220 h/mês; 40 horas = 200 h/mês; 30 horas = 150 h/mês. Em branco, o app usa ${HORAS_PADRAO}.</p>${ppl}<label class="check" style="margin-top:10px"><input type="checkbox" id="cfg-horas" ${tempoOn()?'checked':''}> Mostrar o tempo de trabalho ao lado dos gastos (só neste aparelho)</label></section>
@@ -1458,7 +1564,13 @@ function vAjustes(){
 
 /* ---------- formulários ---------- */
 const dlg=$('#sheet');let sheetCtx=null;
-function openSheet(title,bodyHtml,foot,ctx){sheetCtx=ctx||{};dlg.innerHTML=`<form class="sheet" id="sf" novalidate><div class="sheet-h"><h2>${title}</h2><button type="button" class="x" data-act="closesheet" aria-label="Fechar">×</button></div><div class="sheet-b">${bodyHtml}</div><div class="sheet-f">${foot}</div></form>`;if(!dlg.open)dlg.showModal();if(sheetCtx.upd)sheetCtx.upd();const f=dlg.querySelector('[autofocus]');if(f)setTimeout(()=>f.focus(),30)}
+function openSheet(title,bodyHtml,foot,ctx){sheetCtx=ctx||{};const r=sheetCtx.rec,alheio=r&&!souAutor(r);
+  const aviso=alheio?`<div class="banner"><p>Lançado por <b>${esc(nomeDe(autorDe(r)))}</b>. ${papel()==='dono'||papel()==='editor'?'Suas mudanças vão como <b>pedido</b>: só valem quando ela ou ele aprovar.':'Só quem lançou pode mudar.'}</p></div>`:'';
+  const pend=r&&r.ped?`<div class="banner"><p>Há um pedido para ${r.ped.tipo==='del'?'apagar':'alterar'} este lançamento, feito por ${esc(nomeDe(r.ped.por))}.</p></div>`:'';
+  dlg.innerHTML=`<form class="sheet" id="sf" novalidate><div class="sheet-h"><h2>${title}</h2><button type="button" class="x" data-act="closesheet" aria-label="Fechar">×</button></div><div class="sheet-b">${aviso}${pend}${bodyHtml}</div><div class="sheet-f">${foot}</div></form>`;
+  if(alheio){const sv=dlg.querySelector('.sheet-f .btn.primary'),dl=dlg.querySelector('[data-act="delsheet"]');const pode=papel()==='dono'||papel()==='editor';
+    if(sv){if(pode)sv.textContent='Pedir alteração';else sv.remove()}if(dl){if(pode)dl.textContent='Pedir exclusão';else dl.replaceWith(Object.assign(document.createElement('span'),{className:'spacer'}))}}
+  if(!dlg.open)dlg.showModal();if(sheetCtx.upd)sheetCtx.upd();const f=dlg.querySelector('[autofocus]');if(f)setTimeout(()=>f.focus(),30)}
 function closeSheet(){if(dlg.open)dlg.close();sheetCtx=null}
 const foot=(e,delLabel='Excluir')=>`${e&&!S.ro?`<button type="button" class="btn danger spacer" data-act="delsheet">${delLabel}</button>`:'<span class="spacer"></span>'}<button type="button" class="btn" data-act="closesheet">Cancelar</button>${S.ro&&S.mode!=='demo'?'':'<button class="btn primary">Salvar</button>'}`;
 const catOpts=(list,sel)=>(sel&&!list.includes(sel)?[sel,...list]:list).map(c=>`<option ${c===sel?'selected':''}>${esc(c)}</option>`).join('');
@@ -1470,7 +1582,7 @@ function defDate(){const t=today();return ymOf(t)===S.month?t:dateIn(S.month,1)}
 const F=n=>dlg.querySelector(`[name="${n}"]`);
 const fv=n=>F(n)?.value??'';
 const fc=n=>!!F(n)?.checked;
-function delAsk(btn,fn){if(btn.dataset.sure){fn()}else{btn.dataset.sure=1;btn.textContent='Confirmar exclusão'}}
+function delAsk(btn,fn){if(btn.dataset.sure){fn()}else{btn.dataset.sure=1;btn.textContent=/Pedir/.test(btn.textContent)?'Confirmar pedido':'Confirmar exclusão'}}
 function newForm(k){({var:formVar,in:formIn,fix:formFix,tra:formTra,emp:formEmp,mov:formMov})[k]?.(null)}
 
 /* gasto */
@@ -1841,8 +1953,8 @@ document.addEventListener('click',e=>{
     case'fc':S.f.cut=S.f.cut===t.dataset.v?null:t.dataset.v;render();break;
     case'clearf':S.f={kind:'all',cut:null,person:null,pay:null,cat:null,q:''};render();break;
     case'toggletable':S.showTable=!S.showTable;render();break;
-    case'fresh':if(!S.dbChecked)break;startWith(freshRecs());S.tab='ajustes';toast('Pronto. Cadastre pessoas, contas e cartões.');break;
-    case'keepdemo':if(!S.dbChecked)break;startWith(Object.values(S.recs).map(r=>({...r,c:null,by:null})));toast('O exemplo agora é seu. Troque os nomes e valores.');break;
+    case'fresh':if(!S.dbChecked||!isDono())break;startWith(freshRecs());S.tab='ajustes';toast('Pronto. Cadastre pessoas, contas e cartões.');break;
+    case'keepdemo':if(!S.dbChecked||!isDono())break;startWith(Object.values(S.recs).map(r=>({...r,c:null,by:null})));toast('O exemplo agora é seu. Troque os nomes e valores.');break;
     case'add':if(!guard())break;if(!S.st.accounts.length){S.tab='ajustes';render();toast('Cadastre uma conta primeiro.');break}formVar(null);break;
     case'swkind':newForm(t.dataset.v);break;
     case'new':if(!guard())break;newForm(t.dataset.kind);break;
@@ -1882,6 +1994,13 @@ document.addEventListener('click',e=>{
     case'iaperg':iaPerg();break;
     case'iaq':iaPerg(t.dataset.q);break;
     case'iaclear':S.iaAns=null;scheduleRender();break;
+    case'pedok':pedOk(t.dataset.id);break;
+    case'pedno':pedNo(t.dataset.id);break;
+    case'pedcancel':pedNo(t.dataset.id,'Pedido cancelado.');break;
+    case'recomendar':recomendar();break;
+    case'setpapel':setPapel(t.dataset.uid,t.dataset.v);break;
+    case'remmembro':delAsk(t,()=>remMembro(t.dataset.uid));break;
+    case'sairdacasa':delAsk(t,()=>sairDaCasa());break;
     case'csv':csv();break;
     case'qin':if(guard())quickIn();break;
     case'qout':if(guard())quickOut();break;
@@ -1890,7 +2009,7 @@ document.addEventListener('click',e=>{
     case'evotable':S.evoTable=!S.evoTable;render();break;
     case'reload':location.reload();break;
     case'authmode':S.authMode=t.dataset.v;render();break;
-    case'logout':if(FB)FB.auth.signOut();break;
+    case'logout':if(FB)sairDaConta();break;
     case'mkinvite':mkInvite(t);break;
     case'copyinv':{const tx=inviteText();if(navigator.clipboard)navigator.clipboard.writeText(tx).then(()=>toast('Convite copiado. Cole no WhatsApp da pessoa.'),()=>toast('Não deu para copiar. Mande o código: '+(S.invite?.code||'')));else toast('Mande o código: '+(S.invite?.code||''));break}
     case'install':if(S.installEvt){S.installEvt.prompt();S.installEvt.userChoice?.finally(()=>{S.installEvt=null;scheduleRender()})}break;
@@ -1918,6 +2037,8 @@ document.addEventListener('change',e=>{
   if(t.id==='tq-p'){tqUpd();return}
   if(t.id==='qo-p'){qoHint();return}
   if(t.id==='cfg-horas'){lsSet('caixa-em-dia:horas',t.checked);render();return}
+  if(t.dataset.papel){setPapel(t.dataset.papel,t.value);return}
+  if(t.dataset.vertudo){setVerTudo(t.dataset.vertudo,t.checked);return}
   if(t.id==='fPerson'){S.f.person=t.value||null;render();return}
   if(t.id==='fPay'){S.f.pay=t.value||null;render();return}
   if(t.id==='fCat'){S.f.cat=t.value||null;render();return}
@@ -1934,10 +2055,14 @@ $('#fileIn').addEventListener('change',async e=>{const f=e.target.files[0];e.tar
     if(S.mode==='demo'){await startWith(recs,true);toast(DB.db?'Backup restaurado. Tudo salvo no banco da casa.':'Backup restaurado.')}else{S.pendingRestore=recs;S.tab='ajustes';render()}
   }catch(_){toast('Esse arquivo não é um backup do Caixa em Dia.')}});
 async function deleteAllDb(){const paths=Object.values(S.recs).map(recPath);await Promise.all(paths.map(p=>dbDel(p)))}
+async function modoApagar(on){if(S.mode==='db'&&S.cid)await casaRef().update({apagando:on})}
 async function replaceAll(recs){
-  if(!guard())return;
+  if(!guard())return;if(!isDono())return toast('Só o dono da casa restaura backup.');
+  try{await modoApagar(true)}catch(e){return casaErr()}
+  try{
   if(S.mode==='db'&&DB.db){S.wiping=true;try{await deleteAllDb()}finally{S.wiping=false}}
-  S.recs={};await putMany(recs,progToast);
+  S.recs={};await putMany(recs.map(r=>({...r,by:r.by||S.me})),progToast);
+  }finally{modoApagar(false).catch(()=>{})}
   if(DB.db){for(const f of Object.values(DB.unsubs))try{f()}catch(e){}DB.unsubs={};DB.subs={};subscribeAll()}
   toast('Backup restaurado. Tudo salvo no banco da casa.');
 }
@@ -1948,8 +2073,8 @@ async function csv(){if(!S.downloads)return;const L=filteredLines();const q=v=>`
   const txt='﻿'+rows.map((r,ri)=>r.map((v,i)=>i===9&&ri>0?String(round2(v)).replace('.',','):q(v)).join(';')).join('\n');
   try{await S.downloads.save({filename:`lancamentos-${S.month}.csv`,data:txt})}catch(e){if(e&&e.code!=='declined')toast('Não foi possível baixar agora.')}}
 async function wipe(){
-  if(!guard())return;
-  if(S.mode==='db'&&DB.db){S.wiping=true;try{await deleteAllDb()}catch(e){S.wiping=false;toast('Não consegui apagar tudo. Tente de novo.');return}}
+  if(!guard())return;if(!isDono())return toast('Só o dono da casa apaga tudo.');
+  if(S.mode==='db'&&DB.db){S.wiping=true;try{await modoApagar(true);await deleteAllDb()}catch(e){S.wiping=false;toast('Não consegui apagar tudo. Tente de novo.');return}finally{modoApagar(false).catch(()=>{})}}
   lsDel(LS1);lsDel(LS2);S.mode='demo';S.tab='mes';setRecs(demoRecs());S.wiping=false;toast('Tudo apagado.');
 }
 window.addEventListener('beforeunload',e=>{if(SAVING>0){e.preventDefault();e.returnValue='Ainda estou salvando seus dados. Se sair agora, parte deles pode se perder.'}});
