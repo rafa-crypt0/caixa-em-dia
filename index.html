@@ -340,6 +340,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .tq #tqOut{display:grid;gap:4px}
 .tag.hora{color:var(--accent)}
 .tag.ped{color:var(--bad)}
+.row-i.lote{grid-template-columns:auto minmax(0,1fr);align-items:start}
+.row-i.lote .m{grid-column:2;display:block;line-height:1.5}
 .pedido{display:grid;gap:8px;border:1px solid var(--line);border-radius:12px;padding:10px 12px}
 .members li{margin:2px 0}
 .memrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)}
@@ -370,6 +372,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <dialog id="sheet"></dialog>
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="fileIn" accept=".json,application/json" hidden>
+<input type="file" id="loteIn" accept=".json,application/json" hidden>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -1559,7 +1562,7 @@ function vAjustes(){
   <section class="panel"><div class="panel-h"><h2>Cartões de crédito</h2><button class="btn sm" data-act="newcard" ${st.accounts.length&&!dis?'':'disabled'}>+ Cartão</button></div><p class="help">Cada banco diz a regra de um jeito. Escolha a que aparece no seu app: "fecha no dia" (compras nesse dia já vão para a próxima fatura) ou "compras até o dia" (compras nesse dia ainda entram).</p>${crds||'<div class="empty small">Nenhum cartão.</div>'}</section>
   <section class="panel"><div class="panel-h"><h2>Início do controle</h2></div><div class="setrow"><label class="fld"><span>Primeiro mês</span><input id="cfg-start" type="month" value="${st.start}" data-set="start" ${dis}></label></div></section>
   <section class="panel"><div class="panel-h"><h2>Seus dados</h2></div><p style="margin:0 0 12px">${where}</p>
-    <div class="chips">${S.downloads&&S.mode!=='demo'?'<button class="btn" data-act="backup">Baixar backup</button>':''}${dis?'':'<button class="btn" data-act="restore">Restaurar backup</button>'}${S.mode==='demo'?(S.ro||!S.dbChecked?'':'<button class="btn primary" data-act="fresh">Começar com meus dados</button>'):(dis?'':'<button class="btn danger" data-act="wipe">Apagar tudo</button>')}</div><div id="wipeBox"></div>${pr}</section>`;
+    <div class="chips">${S.ro&&S.mode!=='demo'?'':'<button class="btn" data-act="lote">Importar lançamentos</button>'}${S.downloads&&S.mode!=='demo'?'<button class="btn" data-act="backup">Baixar backup</button>':''}${dis?'':'<button class="btn" data-act="restore">Restaurar backup</button>'}${S.mode==='demo'?(S.ro||!S.dbChecked?'':'<button class="btn primary" data-act="fresh">Começar com meus dados</button>'):(dis?'':'<button class="btn danger" data-act="wipe">Apagar tudo</button>')}</div><div id="wipeBox"></div>${pr}</section>`;
 }
 
 /* ---------- formulários ---------- */
@@ -1983,6 +1986,7 @@ document.addEventListener('click',e=>{
       break}
     case'backup':backup();break;
     case'restore':$('#fileIn').click();break;
+    case'lote':if(guard())$('#loteIn').click();break;
     case'restore0':S.pendingRestore=null;render();break;
     case'restore2':replaceAll(S.pendingRestore);S.pendingRestore=null;break;
     case'wipe':$('#wipeBox').innerHTML=`<div class="banner bad" style="margin-top:12px"><p>Isso apaga todos os lançamentos${S.mode==='db'?' do banco da casa, para todos':' deste navegador'}. Não dá para desfazer.</p><button class="btn danger" data-act="wipe2">Apagar tudo agora</button></div>`;break;
@@ -2054,6 +2058,63 @@ $('#fileIn').addEventListener('change',async e=>{const f=e.target.files[0];e.tar
     if(!recs||!recs.length)throw 0;
     if(S.mode==='demo'){await startWith(recs,true);toast(DB.db?'Backup restaurado. Tudo salvo no banco da casa.':'Backup restaurado.')}else{S.pendingRestore=recs;S.tab='ajustes';render()}
   }catch(_){toast('Esse arquivo não é um backup do Caixa em Dia.')}});
+/* ---------- importar lançamentos de um arquivo ----------
+   Acrescenta, corrige ou apaga lançamentos sem mexer no resto (diferente de "Restaurar backup").
+   Antes de aplicar, mostra a lista, marca o que parece repetido e o que mudou desde que o arquivo foi feito.
+   Formato: {lote:1, titulo, ops:[{op:'add',rec:{...},nota}, {op:'edit',id,antes:{...},depois:{...},nota}, {op:'del',id,antes:{...},nota}]} */
+const LOTE_CAMPOS={gas:['date','desc','cat','personId','pay','amount','cut','inst','refund','bill','total'],ent:['desc','cat','personId','accountId','day','amount','from','to','once','ov','comp'],fix:['desc','cat','personId','pay','day','amount','from','to','ov','cut'],car:['name','accountId','rule','day','dueDay','dueNext']};
+const pick=(o,ks)=>{const r={};for(const k of ks)if(o&&o[k]!==undefined)r[k]=o[k];return r};
+const igual=(a,b)=>JSON.stringify(a??null)===JSON.stringify(b??null);
+const valDe=r=>+(r.total||r.amount)||0;
+const diaDe=r=>r.t==='gas'?r.date:(r.from&&r.day?dateIn(r.from,r.day):null);
+const dDias=(a,b)=>Math.abs((new Date(a)-new Date(b))/864e5);
+function loteParecidos(r){const d=diaDe(r),v=valDe(r);if(!d||!v)return[];
+  return Object.values(S.recs).filter(x=>x.t===r.t&&Math.abs(valDe(x)-v)<0.011&&(r.t!=='gas'||x.pay===r.pay)&&(r.t!=='ent'||x.accountId===r.accountId)&&diaDe(x)&&dDias(diaDe(x),d)<=2)}
+function loteRefOk(r){if(r.pay&&!pay(r.pay))return'forma de pagamento não existe';if(r.accountId&&!acc(r.accountId))return'conta não existe';if(r.personId&&!person(r.personId))return'pessoa não existe';return''}
+function loteCheck(o){
+  if(o.op==='add'){const t=o.rec?.t;if(!LOTE_CAMPOS[t]||t==='car')return{err:'tipo não aceito'};const r={t,...pick(o.rec,LOTE_CAMPOS[t])};
+    if(!(valDe(r)>0))return{err:'sem valor'};if(t==='gas'&&!isDate(r.date))return{err:'sem data'};const e=loteRefOk(r);if(e)return{err:e};
+    const dup=loteParecidos(r);return{r,warn:dup.length?`Parece repetido: já existe "${dup[0].desc||''}" de ${money(valDe(dup[0]))} em ${fDY(diaDe(dup[0]))}.`:''}}
+  const cur=S.recs[o.id];if(!cur)return{err:o.op==='del'?'já foi apagado':'não encontrado no app'};
+  if(o.op==='del'){const mud=o.antes&&Object.keys(o.antes).some(k=>!igual(o.antes[k],cur[k]));return{cur,warn:mud?'Este lançamento mudou desde que o arquivo foi feito.':''}}
+  if(o.op==='edit'){const dep=pick(o.depois,LOTE_CAMPOS[cur.t]||[]);if(!Object.keys(dep).length)return{err:'nada para mudar'};
+    if(CFGT[cur.t]&&!isDono())return{err:'só o dono da casa muda isso'};
+    if(Object.keys(dep).every(k=>igual(dep[k],cur[k])))return{cur,dep,ja:true,warn:'Já está assim.'};
+    const mud=o.antes&&Object.keys(o.antes).some(k=>!igual(o.antes[k],cur[k]));const e=loteRefOk(dep);if(e)return{err:e};
+    return{cur,dep,warn:mud?'Este lançamento mudou desde que o arquivo foi feito. Confira antes de aplicar.':''}}
+  return{err:'operação desconhecida'};
+}
+function loteResumo(r){const p=r.t==='car'?'':r.t==='ent'?(acc(r.accountId)?.name||''):(pay(r.pay)?.name||'');
+  return [diaDe(r)?fDY(diaDe(r)):'',r.cat,p,r.personId!==undefined?pname(r.personId):'',r.inst?`${r.inst.tot}x de ${money(r.amount)}`:''].filter(Boolean).map(esc).join(' · ')}
+function loteDif(cur,dep){return Object.keys(dep).filter(k=>!igual(dep[k],cur[k])).map(k=>`${esc(PEDK[k]||({dueDay:'vencimento',day:'dia'})[k]||k)}: ${esc(k==='dueDay'||k==='day'?String(cur[k]??'—'):pedVal(k,cur[k]))} → <b>${esc(k==='dueDay'||k==='day'?String(dep[k]):pedVal(k,dep[k]))}</b>`).join('<br>')}
+function loteSheet(L){
+  const ops=(Array.isArray(L.ops)?L.ops:[]).slice(0,500).map(o=>({o,...loteCheck(o)}));
+  if(!ops.length)return toast('Esse arquivo não tem lançamentos para importar.');
+  const nome={add:'Novo',edit:'Corrigir',del:'Apagar'};
+  const linhas=ops.map((x,i)=>{const o=x.o,r=x.r||x.cur||{},ok=!x.err&&!x.warn&&!x.ja;
+    const tit=o.op==='add'?`${esc(r.desc||'')} <span class="num">${money(valDe(r))}</span>`:`${esc(r.desc||r.name||'')} ${r.t==='car'?'':`<span class="num">${money(valDe(r))}</span>`}`;
+    const det=o.op==='edit'&&x.dep?loteDif(x.cur,x.dep):esc(loteResumo(r));
+    return `<label class="row-i lote" style="grid-template-columns:auto minmax(0,1fr)"><input type="checkbox" data-lote="${i}" ${ok?'checked':''} ${x.err?'disabled':''} style="grid-row:1/span 2;width:18px;height:18px;accent-color:var(--accent)">
+      <span class="d"><span class="tag ${o.op==='del'?'ped':''}">${nome[o.op]||o.op}</span> ${tit}</span>
+      <span class="m" style="grid-column:2">${det}${o.nota?`<br><span class="muted">${esc(o.nota)}</span>`:''}${x.err?`<br><b style="color:var(--bad)">Não dá: ${esc(x.err)}</b>`:x.warn?`<br><b style="color:var(--bad)">⚠ ${esc(x.warn)}</b>`:''}</span></label>`}).join('');
+  const nOk=ops.filter(x=>!x.err&&!x.warn&&!x.ja).length,nW=ops.filter(x=>!x.err&&(x.warn||x.ja)).length;
+  openSheet('Importar lançamentos',`${L.titulo?`<p style="margin:0"><b>${esc(L.titulo)}</b></p>`:''}<p class="small" style="margin:0">${ops.length} itens. <b>${nOk}</b> marcados para aplicar.${nW?` <b style="color:var(--bad)">${nW}</b> com aviso ficaram desmarcados: leia e marque se estiver certo.`:''} Nada muda até você tocar em Aplicar.</p><div class="rows">${linhas}</div>`,
+    `<span class="spacer"></span><button type="button" class="btn" data-act="closesheet">Cancelar</button><button class="btn primary">Aplicar marcados</button>`,
+    {kind:'lote',save:()=>loteAplicar(ops)});
+}
+async function loteAplicar(ops){
+  if(!guard())return;const sel=[...dlg.querySelectorAll('[data-lote]')].filter(b=>b.checked&&!b.disabled).map(b=>ops[+b.dataset.lote]);
+  if(!sel.length)return toast('Nenhum item marcado.');
+  const adds=[];let ed=0,ap=0,ped=0;
+  for(const x of sel){const o=x.o;
+    if(o.op==='add')adds.push({...x.r,id:uid()});
+    else if(o.op==='edit'){const c=S.recs[o.id];if(!c)continue;const alheio=!souAutor(c);put({...c,...x.dep});alheio?ped++:ed++}
+    else if(o.op==='del'){const c=S.recs[o.id];if(!c)continue;const alheio=!souAutor(c);drop(o.id);alheio?ped++:ap++}}
+  closeSheet();if(adds.length)await putMany(adds,adds.length>10?progToast:null);
+  toast([adds.length&&`${adds.length} novos`,ed&&`${ed} corrigidos`,ap&&`${ap} apagados`,ped&&`${ped} viraram pedido (lançados por outra pessoa)`].filter(Boolean).join(', ')+'.');
+}
+$('#loteIn').addEventListener('change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
+  try{const j=JSON.parse(await f.text());if(!j||!j.lote||!Array.isArray(j.ops))throw 0;loteSheet(j)}catch(_){toast('Esse arquivo não é uma lista de lançamentos do Caixa em Dia.')}});
 async function deleteAllDb(){const paths=Object.values(S.recs).map(recPath);await Promise.all(paths.map(p=>dbDel(p)))}
 async function modoApagar(on){if(S.mode==='db'&&S.cid)await casaRef().update({apagando:on})}
 async function replaceAll(recs){
