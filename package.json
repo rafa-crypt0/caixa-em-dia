@@ -5,8 +5,8 @@
   "description": "Controle financeiro da casa (PWA)",
   "type": "module",
   "scripts": {
-    "test": "vitest run tests/calc.test.js",
-    "test:watch": "vitest tests/calc.test.js",
+    "test": "vitest run tests/calc.test.js tests/import.test.js",
+    "test:watch": "vitest tests/calc.test.js tests/import.test.js",
     "test:rules": "node scripts/run-rules-tests.js",
     "test:rules:raw": "vitest run tests/firestore.rules.test.js",
     "test:all": "npm test && npm run test:rules"

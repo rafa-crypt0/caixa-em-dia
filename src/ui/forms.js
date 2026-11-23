@@ -16,6 +16,7 @@ import {
   catOpts, pplOpts, accOpts, payOptions, cutSeg, segPick, typeTabs, defDate,
   PEDK, pedVal, tempoTxt, lastMonths
 } from './utils.js';
+import { parseBankFile, toLoteOps } from '../import.js';
 
 let sheetCtx = null;
 export const getDlg = () => $('#sheet');
@@ -557,9 +558,7 @@ export function loteDif(cur, dep) {
   return Object.keys(dep).filter(k => !igual(dep[k], cur[k])).map(k => `${esc(PEDK[k] || ({ dueDay: 'vencimento', day: 'dia' })[k] || k)}: ${esc(k === 'dueDay' || k === 'day' ? String(cur[k] ?? '—') : pedVal(k, cur[k]))} → <b>${esc(k === 'dueDay' || k === 'day' ? String(dep[k]) : pedVal(k, dep[k]))}</b>`).join('<br>');
 }
 
-export function loteSheet(L) {
-  const ops = (Array.isArray(L.ops) ? L.ops : []).slice(0, 500).map(o => ({ o, ...loteCheck(o) }));
-  if (!ops.length) return toast('Esse arquivo não tem lançamentos para importar.');
+export function loteRenderRows(ops) {
   const nome = { add: 'Novo', edit: 'Corrigir', del: 'Apagar' };
   const linhas = ops.map((x, i) => {
     const o = x.o, r = x.r || x.cur || {}, ok = !x.err && !x.warn && !x.ja;
@@ -570,9 +569,35 @@ export function loteSheet(L) {
       <span class="m" style="grid-column:2">${det}${o.nota ? `<br><span class="muted">${esc(o.nota)}</span>` : ''}${x.err ? `<br><b style="color:var(--bad)">Não dá: ${esc(x.err)}</b>` : x.warn ? `<br><b style="color:var(--bad)">⚠ ${esc(x.warn)}</b>` : ''}</span></label>`;
   }).join('');
   const nOk = ops.filter(x => !x.err && !x.warn && !x.ja).length, nW = ops.filter(x => !x.err && (x.warn || x.ja)).length;
-  openSheet('Importar lançamentos', `${L.titulo ? `<p style="margin:0"><b>${esc(L.titulo)}</b></p>` : ''}<p class="small" style="margin:0">${ops.length} itens. <b>${nOk}</b> marcados para aplicar.${nW ? ` <b style="color:var(--bad)">${nW}</b> com aviso ficaram desmarcados: leia e marque se estiver certo.` : ''} Nada muda até você tocar em Aplicar.</p><div class="rows">${linhas}</div>`,
+  return `<p class="small" style="margin:0">${ops.length} itens. <b>${nOk}</b> marcados para aplicar.${nW ? ` <b style="color:var(--bad)">${nW}</b> com aviso ficaram desmarcados: leia e marque se estiver certo.` : ''} Nada muda até você tocar em Aplicar.</p><div class="rows">${linhas}</div>`;
+}
+
+export function loteSheet(L) {
+  let ops = (Array.isArray(L.ops) ? L.ops : []).slice(0, 500).map(o => ({ o, ...loteCheck(o) }));
+  if (!ops.length) return toast('Esse arquivo não tem lançamentos para importar.');
+  const hasTargetPicker = !!L.rawParsed;
+  const targetHtml = hasTargetPicker
+    ? `<div class="two"><label class="fld"><span>Conta ou cartão do extrato/fatura</span><select id="f-lotepay" name="lotePay">${payOptions(L.payKey)}</select></label><label class="fld" id="loteFatFld" ${pay(L.payKey)?.type === 'card' ? '' : 'hidden'}><span>Mês da fatura</span><input id="f-lotebill" type="month" name="loteBill" value="${L.bill || S.month}"></label></div>`
+    : '';
+  openSheet('Importar lançamentos', `${L.titulo ? `<p style="margin:0"><b>${esc(L.titulo)}</b></p>` : ''}${targetHtml}<div id="loteBody" class="stack" style="gap:10px">${loteRenderRows(ops)}</div>`,
     `<span class="spacer"></span><button type="button" class="btn" data-act="closesheet">Cancelar</button><button class="btn primary">Aplicar marcados</button>`,
-    { kind: 'lote', save: () => loteAplicar(ops) });
+    {
+      kind: 'lote',
+      upd: ev => {
+        if (!hasTargetPicker || !ev || (ev.target.name !== 'lotePay' && ev.target.name !== 'loteBill')) return;
+        const pk = fv('lotePay'), bill = fv('loteBill'), isCard = pay(pk)?.type === 'card';
+        const fatFld = $('#loteFatFld');
+        if (fatFld) fatFld.hidden = !isCard;
+        const reparsed = L.rawParsed.rawText
+          ? parseBankFile(L.rawParsed.rawText, L.titulo || '', { isCard })
+          : L.rawParsed;
+        const nextL = toLoteOps(reparsed, { payKey: pk, bill, titulo: L.titulo });
+        ops = (nextL.ops || []).slice(0, 500).map(o => ({ o, ...loteCheck(o) }));
+        const bodyEl = $('#loteBody');
+        if (bodyEl) bodyEl.innerHTML = loteRenderRows(ops);
+      },
+      save: () => loteAplicar(ops)
+    });
 }
 
 export async function loteAplicar(ops) {

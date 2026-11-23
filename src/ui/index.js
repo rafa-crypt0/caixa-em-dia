@@ -14,7 +14,8 @@ import {
   esc, $, toast, SUBS, registerViews, render, scheduleRender,
   tqUpd, qoHint
 } from './utils.js';
-import { vResumo, quickIn, quickOut, quickMore } from './vResumo.js';
+import { vResumo, quickIn, quickOut, quickMore, quickPhrase } from './vResumo.js';
+import { decodeBankFile, parseBankFile, toLoteOps } from '../import.js';
 import { vMes, flowTable, drawFlow } from './vMes.js';
 import { vLanc, vlanc } from './vLanc.js';
 import { vRel, drawEvo, catSegs } from './vRel.js';
@@ -220,6 +221,7 @@ export function initEvents() {
       case 'qin': if (guard()) quickIn(); break;
       case 'qout': if (guard()) quickOut(); break;
       case 'qmore': if (guard()) quickMore(); break;
+      case 'qfrase': if (guard()) quickPhrase(); break;
       case 'catmode': S.catMode = t.dataset.v; render(); break;
       case 'evotable': S.evoTable = !S.evoTable; render(); break;
       case 'reload': location.reload(); break;
@@ -246,7 +248,8 @@ export function initEvents() {
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter' || e.isComposing) return;
     const id = e.target && e.target.id;
-    if (id === 'ia-frase') { e.preventDefault(); if (guard()) iaFrase(); }
+    if (id === 'q-frase') { e.preventDefault(); if (guard()) quickPhrase(); }
+    else if (id === 'ia-frase') { e.preventDefault(); if (guard()) iaFrase(); }
     else if (id === 'ia-perg') { e.preventDefault(); iaPerg(); }
   });
 
@@ -358,10 +361,24 @@ export function initEvents() {
       e.target.value = '';
       if (!f) return;
       try {
-        const j = JSON.parse(await f.text());
-        if (!j || !j.lote || !Array.isArray(j.ops)) throw 0;
-        loteSheet(j);
-      } catch (_) { toast('Esse arquivo não é uma lista de lançamentos do Caixa em Dia.'); }
+        const buf = await f.arrayBuffer();
+        const txt = decodeBankFile(buf).trim();
+        if (f.name.toLowerCase().endsWith('.json') || txt.startsWith('{')) {
+          const j = JSON.parse(txt);
+          if (!j || !j.lote || !Array.isArray(j.ops)) throw new Error('invalid_json');
+          loteSheet(j);
+          return;
+        }
+        const parsed = parseBankFile(buf, f.name, { defaultYear: S.month.slice(0, 4) });
+        if (!parsed.items.length) {
+          toast('Não encontrei lançamentos válidos nesse arquivo OFX/CSV.');
+          return;
+        }
+        const lote = toLoteOps(parsed, { titulo: f.name, bill: S.month });
+        loteSheet(lote);
+      } catch (_) {
+        toast('Não consegui ler esse arquivo. Use um extrato OFX, CSV ou arquivo JSON de lote.');
+      }
     });
   }
 

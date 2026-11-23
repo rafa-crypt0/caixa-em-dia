@@ -20,7 +20,7 @@ export function vLanc() {
   const people = [...S.st.people.map(p => [p.id, p.name]), ['_', 'Os dois / casa']];
   const anyF = f.kind !== 'all' || f.cut || f.person || f.pay || f.cat || f.q;
   return `<section class="panel">
-    <div class="panel-h"><h2>Lançamentos de ${ymLong(S.month)}</h2><div class="chips">${iaOn() && !S.ro ? '<button class="btn sm" data-act="ai">Importar extrato com IA</button>' : ''}${S.downloads ? '<button class="btn sm" data-act="csv">Baixar CSV</button>' : ''}</div></div>
+    <div class="panel-h"><h2>Lançamentos de ${ymLong(S.month)}</h2><div class="chips">${!S.ro || S.mode === 'demo' ? '<button class="btn sm" data-act="lote">Importar OFX / CSV</button>' : ''}${iaOn() && !S.ro ? '<button class="btn sm" data-act="ai">Importar extrato com IA</button>' : ''}${S.downloads ? '<button class="btn sm" data-act="csv">Baixar CSV</button>' : ''}</div></div>
     <div class="filters">
       <div class="row chips">${kinds.map(([k, l]) => `<button class="chip" aria-pressed="${f.kind === k}" data-act="fk" data-v="${k}">${l}</button>`).join('')}</div>
       <div class="row chips">${cuts.map(([k, l]) => `<button class="chip" aria-pressed="${f.cut === k}" data-act="fc" data-v="${k}"><span class="dot" style="background:var(${k === 'none' ? '--c-none' : CUTS[k].c})"></span>${l}</button>`).join('')}</div>

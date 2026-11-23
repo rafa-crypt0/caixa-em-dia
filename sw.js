@@ -2,7 +2,7 @@
 const CACHE = 'caixa-em-dia-v1';
 const SHELL = [
   './', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png',
-  './src/main.js', './src/state.js', './src/calc.js', './src/db.js',
+  './src/main.js', './src/state.js', './src/calc.js', './src/db.js', './src/import.js',
   './src/ui/index.js', './src/ui/utils.js', './src/ui/forms.js',
   './src/ui/vResumo.js', './src/ui/vMes.js', './src/ui/vLanc.js',
   './src/ui/vRel.js', './src/ui/vMais.js', './src/ui/vContas.js',
