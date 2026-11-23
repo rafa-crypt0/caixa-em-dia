@@ -1,0 +1,19 @@
+{
+  "name": "caixa-em-dia",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Controle financeiro da casa (PWA)",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run tests/calc.test.js",
+    "test:watch": "vitest tests/calc.test.js",
+    "test:rules": "node scripts/run-rules-tests.js",
+    "test:rules:raw": "vitest run tests/firestore.rules.test.js",
+    "test:all": "npm test && npm run test:rules"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^10.12.2",
+    "vitest": "^2.1.8"
+  }
+}
