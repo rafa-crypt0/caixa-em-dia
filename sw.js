@@ -1,9 +1,16 @@
-/* Guarda o app no celular para abrir sem internet. Os dados ficam com o Firebase. */
+/* Guarda o app no celular para abrir sem internet. Os dados ficam com o Firebase ou neste aparelho. */
 const CACHE = 'caixa-em-dia-v1';
-const SHELL = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png',
+const SHELL = [
+  './', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png',
+  './src/main.js', './src/state.js', './src/calc.js', './src/db.js',
+  './src/ui/index.js', './src/ui/utils.js', './src/ui/forms.js',
+  './src/ui/vResumo.js', './src/ui/vMes.js', './src/ui/vLanc.js',
+  './src/ui/vRel.js', './src/ui/vMais.js', './src/ui/vContas.js',
+  './src/ui/vRed.js', './src/ui/vAjustes.js',
   'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js',
-  'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js'];
+  'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js'
+];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).then(() => self.skipWaiting()));
 });
