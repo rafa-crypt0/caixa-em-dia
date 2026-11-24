@@ -128,3 +128,17 @@ Lá, em **Ajustes → Baixar backup**. Aqui, em **Ajustes → Restaurar backup**
 ## Limites do plano gratuito
 
 Por dia, o Firestore permite 50 mil leituras e 20 mil gravações, e guarda até 1 GB. Duas pessoas usando todo dia ficam bem abaixo disso. Se um dia passar, o app avisa e volta ao normal no dia seguinte.
+
+---
+
+## Automação (CI/CD com GitHub Actions)
+
+O repositório conta com o workflow `.github/workflows/ci-deploy.yml`, que roda automaticamente os testes unitários e os testes das regras do Firestore (`npm run test:all`) a cada `pull_request` ou `push` na branch `main`. Quando um `push` na `main` passa nos testes, ele versiona o cache do `sw.js` e publica o **front-end (Firebase Hosting)** e as **`firestore.rules`** juntos.
+
+Para ativar o deploy automático no GitHub:
+
+1. No console do Firebase, acesse **Configurações do projeto (engrenagem) → Contas de serviço**.
+2. Clique em **Gerar nova chave privada** e baixe o arquivo `.json`.
+3. No repositório do GitHub, acesse **Settings → Secrets and variables → Actions → New repository secret**.
+4. Crie o secret com o nome **`FIREBASE_SERVICE_ACCOUNT`** e cole todo o conteúdo do arquivo `.json` baixado.
+

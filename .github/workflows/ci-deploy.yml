@@ -1,0 +1,75 @@
+name: CI & Deploy — Caixa em Dia
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Testes Unitários e Regras do Firestore
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Configurar Java (para o Firebase Firestore Emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache do binário do Firestore Emulator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firestore-emulator-v1.19.8
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Executar suíte completa de testes (calc, import e firestore.rules)
+        run: npm run test:all
+
+  deploy:
+    name: Publicar Front-end e Firestore Rules
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Versionar cache do Service Worker (sw.js) com o commit da release
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          sed -i "s/const VERSION = '1.0.0';/const VERSION = '1.0.0-${SHORT_SHA}';/" sw.js
+
+      - name: Publicar Front-end (Hosting) e Regras (Firestore) juntos no Firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error::O secret FIREBASE_SERVICE_ACCOUNT não está configurado nas variáveis do repositório."
+            exit 1
+          fi
+          CRED_FILE="$(mktemp)"
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$CRED_FILE"
+          export GOOGLE_APPLICATION_CREDENTIALS="$CRED_FILE"
+          npx --yes firebase-tools deploy --only firestore:rules,hosting --project default --non-interactive
+          rm -f "$CRED_FILE"
