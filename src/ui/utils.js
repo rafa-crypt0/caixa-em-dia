@@ -68,11 +68,14 @@ export function setSave() {
 }
 
 export function topBanner() {
+  const swMsg = S.updateReady
+    ? `<div class="banner info" id="swUpdateBanner"><p><b>Nova versão disponível.</b> Atualize para aplicar as melhorias mais recentes.</p><button class="btn sm primary" data-act="swupdate">Atualizar</button></div>`
+    : '';
   if (S.mode === 'demo') {
-    return `<div class="banner"><p><b>Isto é um exemplo</b> com uma família fictícia (Ana e Beto). Mexa à vontade: nada é salvo enquanto for exemplo.${!S.dbChecked ? ' <b>Procurando os dados da casa…</b>' : DB.db ? ' Se alguém da casa já usa o app, os dados dela aparecem aqui sozinhos.' : ''}</p>${S.ro || !S.dbChecked || !isDono() ? '' : '<button class="btn primary" data-act="fresh">Começar com meus dados</button><button class="btn" data-act="keepdemo">Usar o exemplo como base</button>'}</div>`;
+    return `${swMsg}<div class="banner"><p><b>Isto é um exemplo</b> com uma família fictícia (Ana e Beto). Mexa à vontade: nada é salvo enquanto for exemplo.${!S.dbChecked ? ' <b>Procurando os dados da casa…</b>' : DB.db ? ' Se alguém da casa já usa o app, os dados dela aparecem aqui sozinhos.' : ''}</p>${S.ro || !S.dbChecked || !isDono() ? '' : '<button class="btn primary" data-act="fresh">Começar com meus dados</button><button class="btn" data-act="keepdemo">Usar o exemplo como base</button>'}</div>`;
   }
-  if (S.ro) return `<div class="banner info"><p>${RO_MSG}</p></div>`;
-  return '';
+  if (S.ro) return `${swMsg}<div class="banner info"><p>${RO_MSG}</p></div>`;
+  return swMsg;
 }
 
 /* ---------- opções de formulário e filtros ---------- */

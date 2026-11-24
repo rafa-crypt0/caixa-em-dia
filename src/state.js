@@ -69,7 +69,9 @@ export const S = {
   invite: null,
   authMode: 'login',
   installEvt: null,
-  iaEnabled: false
+  iaEnabled: false,
+  updateReady: false,
+  swReg: null
 };
 
 if (typeof window !== 'undefined') {

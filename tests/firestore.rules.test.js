@@ -446,4 +446,65 @@ describe('Firestore Security Rules — Caixa em Dia', () => {
       await assertSucceeds(deleteDoc(doc(editorDb, path)));
     });
   });
+
+  describe('Exclusão de conta e dados (LGPD / Google Play Store)', () => {
+    beforeEach(async () => {
+      await seedCasa();
+    });
+
+    it('permite que um membro (ex.: Editor ou Dependente) apague seus próprios dados, saia da casa e exclua usuarios/{uid}', async () => {
+      const editorDb = dbFor('uid-editor');
+
+      // Cria cadastro do usuário e um lançamento dele
+      await assertSucceeds(setDoc(doc(editorDb, 'usuarios', 'uid-editor'), { casa: CASA_ID, nome: 'Naiana' }));
+      const lancRef = doc(editorDb, `casas/${CASA_ID}/ano/2026/reg/g-ed-lgpd`);
+      await assertSucceeds(setDoc(lancRef, {
+        t: 'gas', date: '2026-05-10', desc: 'Compra Pessoal', amount: 60, by: 'uid-editor'
+      }));
+
+      // 1. Apaga seus próprios lançamentos
+      await assertSucceeds(deleteDoc(lancRef));
+
+      // 2. Remove seu vínculo da casa (membroSoDeSi)
+      await assertSucceeds(updateDoc(doc(editorDb, 'casas', CASA_ID), {
+        membros: ['uid-dono', 'uid-leitor', 'uid-dep'],
+        'nomes.uid-editor': deleteField(),
+        'papeis.uid-editor': deleteField()
+      }));
+
+      // 3. Apaga seu documento em usuarios/{uid}
+      await assertSucceeds(deleteDoc(doc(editorDb, 'usuarios', 'uid-editor')));
+    });
+
+    it('permite que o Dono saia da casa transferindo a titularidade para outro membro remanescente', async () => {
+      const donoDb = dbFor('uid-dono');
+      const editorDb = dbFor('uid-editor');
+
+      // Editor não pode apagar a casa
+      await assertFails(deleteDoc(doc(editorDb, 'casas', CASA_ID)));
+      // Dono não pode apagar a casa enquanto ainda há outros membros nela
+      await assertFails(deleteDoc(doc(donoDb, 'casas', CASA_ID)));
+
+      // Dono transfere a titularidade para uid-editor e se remove da casa (donoSaindo)
+      await assertSucceeds(updateDoc(doc(donoDb, 'casas', CASA_ID), {
+        dono: 'uid-editor',
+        membros: ['uid-editor', 'uid-leitor', 'uid-dep'],
+        'nomes.uid-dono': deleteField(),
+        'papeis.uid-editor': deleteField()
+      }));
+    });
+
+    it('permite que o Dono único membro apague o documento da casa ao excluir sua conta', async () => {
+      const soloDb = dbFor('uid-solo');
+
+      await assertSucceeds(setDoc(doc(soloDb, 'casas', 'casa-solo'), {
+        nome: 'Casa Solo',
+        dono: 'uid-solo',
+        membros: ['uid-solo'],
+        nomes: { 'uid-solo': 'Solo' }
+      }));
+
+      await assertSucceeds(deleteDoc(doc(soloDb, 'casas', 'casa-solo')));
+    });
+  });
 });

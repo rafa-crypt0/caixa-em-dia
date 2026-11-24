@@ -10,7 +10,7 @@ import {
   cardDue, cardRuleText, cardExample, firstYM, instAmt, rateMonthly, trName,
   lines, summary, carry, endAcc, balanceAt, portfolio, tempoBase, tempoInfo
 } from '../calc.js';
-import { put, drop, putMany, progToast, tempoOn, getFB } from '../db.js';
+import { put, drop, putMany, progToast, tempoOn, getFB, excluirContaEDados, authMsg } from '../db.js';
 import {
   esc, $, toast, scheduleRender, render,
   catOpts, pplOpts, accOpts, payOptions, cutSeg, segPick, typeTabs, defDate,
@@ -799,4 +799,55 @@ export function aiImport() {
   closeSheet();
   putMany(list);
   toast(`${list.length} lançamentos importados.`);
+}
+
+/* ---------- Excluir minha conta e dados (LGPD / Play Store) ---------- */
+export function deleteAccountSheet() {
+  const hasAuth = !!(S.fb || getFB()?.auth?.currentUser);
+  const membros = S.casa?.membros || [];
+  const unicoDono = hasAuth && isDono() && membros.length <= 1;
+  const donoComOutros = hasAuth && isDono() && membros.length > 1;
+  const explicacao = !hasAuth
+    ? 'Todos os lançamentos, contas e configurações salvos neste aparelho serão apagados permanentemente.'
+    : unicoDono
+      ? 'Sua conta de acesso, seu perfil, a sua casa e todos os lançamentos salvos no banco e neste aparelho serão excluídos permanentemente (conforme a LGPD).'
+      : donoComOutros
+        ? 'Sua conta de acesso, seu perfil, os seus lançamentos e os dados deste aparelho serão excluídos permanentemente. A titularidade da casa passará para outro membro remanescente.'
+        : 'Sua conta de acesso, seu perfil, o seu vínculo com a casa, os seus lançamentos e os dados deste aparelho serão excluídos permanentemente (conforme a LGPD).';
+
+  openSheet('Excluir minha conta e dados', `
+    <div class="banner bad"><p><b>Atenção: esta ação é definitiva.</b> ${esc(explicacao)}</p></div>
+    ${hasAuth ? `<label class="fld"><span>Confirme sua senha atual</span><input id="f-delpass" name="delPass" type="password" autocomplete="current-password" placeholder="Digite sua senha para confirmar" required><span class="help">Necessário por segurança para excluir a conta no Firebase Auth.</span></label>` : ''}
+    <label class="check"><input type="checkbox" id="f-delconfirm" name="delConfirm" required> Entendo que minha conta e meus dados serão excluídos permanentemente</label>
+    <p class="err" id="delAccErr" role="alert"></p>`,
+    `<span class="spacer"></span><button type="button" class="btn" data-act="closesheet">Cancelar</button><button class="btn danger" id="delAccBtn">Excluir permanentemente</button>`,
+    {
+      kind: 'delaccount',
+      save: async () => {
+        const errEl = $('#delAccErr'), btn = $('#delAccBtn');
+        if (errEl) errEl.textContent = '';
+        if (!fc('delConfirm')) {
+          if (errEl) errEl.textContent = 'Marque a confirmação acima para prosseguir.';
+          return;
+        }
+        const pass = fv('delPass');
+        if (hasAuth && !pass) {
+          if (errEl) errEl.textContent = 'Digite sua senha atual para confirmar a exclusão.';
+          return;
+        }
+        if (btn) { btn.disabled = true; btn.textContent = 'Excluindo…'; }
+        try {
+          await excluirContaEDados(pass);
+          closeSheet();
+        } catch (e) {
+          if (btn) { btn.disabled = false; btn.textContent = 'Excluir permanentemente'; }
+          const code = (e && e.code) || '';
+          const msg = /requires-recent-login/.test(code)
+            ? 'Por segurança, informe sua senha atual para confirmar a exclusão da conta.'
+            : authMsg(e);
+          if (errEl) errEl.textContent = msg;
+          else toast(msg);
+        }
+      }
+    });
 }

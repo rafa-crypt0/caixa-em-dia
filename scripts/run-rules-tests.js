@@ -93,7 +93,7 @@ async function main() {
       '-jar', JAR_PATH,
       '--host', EMULATOR_HOST,
       '--port', String(EMULATOR_PORT)
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { stdio: 'ignore' });
 
     emuProc.on('error', err => {
       console.error('Erro ao iniciar Firestore Emulator:', err);

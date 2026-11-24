@@ -27,7 +27,7 @@ import {
   getDlg, getSheetCtx, F, fc, guard,
   openSheet, closeSheet, delAsk, newForm, openEdit,
   formVar, formTra, formCon, formMov, formInv, formCard, formFat,
-  closeMonthSheet, loteSheet,
+  closeMonthSheet, loteSheet, deleteAccountSheet,
   aiSheet, aiRun, aiImport, iaFrase, iaPerg
 } from './forms.js';
 
@@ -203,6 +203,8 @@ export function initEvents() {
       case 'restore2': replaceAll(S.pendingRestore); S.pendingRestore = null; break;
       case 'wipe': $('#wipeBox').innerHTML = `<div class="banner bad" style="margin-top:12px"><p>Isso apaga todos os lançamentos${S.mode === 'db' ? ' do banco da casa, para todos' : ' deste navegador'}. Não dá para desfazer.</p><button class="btn danger" data-act="wipe2">Apagar tudo agora</button></div>`; break;
       case 'wipe2': wipe(); break;
+      case 'delaccount': deleteAccountSheet(); break;
+      case 'swupdate': applySwUpdate(); break;
       case 'ai': aiSheet(); break;
       case 'airun': aiRun(); break;
       case 'aiimport': aiImport(); break;
@@ -398,6 +400,44 @@ export function initEvents() {
   });
 }
 
+export function applySwUpdate() {
+  const reg = S.swReg;
+  S.updateReady = false;
+  if (reg && reg.waiting) {
+    reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    setTimeout(() => location.reload(), 600);
+  } else {
+    location.reload();
+  }
+}
+
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    S.swReg = reg;
+    if (reg.waiting) {
+      S.updateReady = true;
+      scheduleRender();
+    }
+    reg.addEventListener('updatefound', () => {
+      const nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', () => {
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+          S.updateReady = true;
+          scheduleRender();
+        }
+      });
+    });
+  }).catch(() => {});
+}
+
 export function boot() {
   initEvents();
   S.downloads = {
@@ -421,6 +461,6 @@ export function boot() {
   }
   render();
   window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); S.installEvt = e; scheduleRender(); });
-  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
+  registerServiceWorker();
   fbInit();
 }

@@ -629,20 +629,114 @@ export async function recomendar() {
 }
 
 /* sair da conta apaga a cópia dos dados guardada neste aparelho */
-export async function sairDaConta() {
-  const limpaLS = () => {
-    try {
-      for (const k of Object.keys(localStorage)) {
-        if (k.startsWith('caixa-em-dia:casa:') || k.startsWith('firestore_') || k === LS1 || k === LS2) localStorage.removeItem(k);
+export function clearLocalData() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith('caixa-em-dia:') || k.startsWith('firestore_') || k === LS1 || k === LS2) {
+        localStorage.removeItem(k);
       }
-    } catch (e) {}
-  };
-  limpaLS();
+    }
+  } catch (e) {}
+}
+
+export async function sairDaConta() {
+  clearLocalData();
   try { await FB?.auth?.signOut(); } catch (e) {}
   const ate = (p, ms) => Promise.race([p, new Promise(r => setTimeout(r, ms))]);
   try { if (FB?.fs) await ate(FB.fs.terminate().then(() => FB.fs.clearPersistence()), 4000); } catch (e) {}
-  limpaLS();
+  clearLocalData();
   location.reload();
+}
+
+/* Excluir conta e dados (LGPD / exigência da Google Play Store) */
+export async function excluirContaEDados(senha = '') {
+  const user = FB?.auth?.currentUser;
+  if (!user) {
+    // Modo local sem conta no Firebase: limpa todos os dados locais e volta ao exemplo
+    clearLocalData();
+    stopAll();
+    S.dbChecked = true;
+    S.phase = 'app';
+    render();
+    toast('Todos os dados deste aparelho foram excluídos.');
+    return { ok: true };
+  }
+
+  // 1. Se a senha foi informada e o usuário usa login por e-mail/senha, reautentica antes de começar
+  if (senha && user.email && typeof firebase !== 'undefined' && firebase.auth?.EmailAuthProvider) {
+    const cred = firebase.auth.EmailAuthProvider.credential(user.email, senha);
+    await user.reauthenticateWithCredential(cred);
+  }
+
+  const uid = S.me || user.uid;
+  const cid = S.cid;
+
+  // 2. Desliga listeners em tempo real para evitar erros intermediários durante a limpeza
+  for (const f of Object.values(DB.unsubs)) try { f(); } catch (e) {}
+  if (DB.casaUnsub) { try { DB.casaUnsub(); } catch (e) {} DB.casaUnsub = null; }
+  DB.unsubs = {};
+  S.wiping = true;
+
+  try {
+    if (cid && FB?.fs) {
+      const membros = S.casa?.membros || [uid];
+      const outros = membros.filter(id => id !== uid);
+      const souDono = isDono();
+
+      if (souDono && outros.length === 0) {
+        // Único membro da casa: apaga todos os registros da casa e o próprio documento da casa
+        try { await FB.fs.doc('casas/' + cid).update({ apagando: true }); } catch (e) {}
+        if (DB.db) {
+          await deleteAllDb();
+        }
+        await FB.fs.doc('casas/' + cid).delete();
+      } else {
+        // Há outros membros na casa: apaga os lançamentos de autoria do usuário e remove seu vínculo da casa
+        if (DB.db) {
+          const meusRecs = Object.values(S.recs).filter(r => !CFGT[r.t] && r.by === uid);
+          await Promise.all(meusRecs.map(r => dbDel(recPath(r)).catch(() => {})));
+        }
+        const F = firebase.firestore.FieldValue;
+        const patch = {
+          membros: F.arrayRemove(uid),
+          ['nomes.' + uid]: F.delete(),
+          ['papeis.' + uid]: F.delete(),
+          ['verTudo.' + uid]: F.delete()
+        };
+        if (souDono && outros.length > 0) {
+          const novoDono = outros[0];
+          patch.dono = novoDono;
+          patch['papeis.' + novoDono] = F.delete();
+          patch['verTudo.' + novoDono] = F.delete();
+        }
+        await FB.fs.doc('casas/' + cid).update(patch);
+      }
+    }
+
+    // 3. Remove o documento do usuário em usuarios/{uid}
+    if (FB?.fs && uid) {
+      await FB.fs.doc('usuarios/' + uid).delete().catch(() => {});
+    }
+
+    // 4. Exclui a conta no Firebase Auth
+    await user.delete();
+  } finally {
+    S.wiping = false;
+  }
+
+  // 5. Limpa o armazenamento local e a persistência offline do Firestore
+  clearLocalData();
+  const ate = (p, ms) => Promise.race([p, new Promise(r => setTimeout(r, ms))]);
+  try { if (FB?.fs) await ate(FB.fs.terminate().then(() => FB.fs.clearPersistence()), 4000); } catch (e) {}
+  clearLocalData();
+  stopAll();
+  S.me = null;
+  S.fb = null;
+  S.phase = 'login';
+  render();
+  toast('Sua conta e seus dados foram excluídos permanentemente.');
+  return { ok: true };
 }
 
 export const inviteText = () => S.invite ? `Entra no nosso Caixa em Dia: ${appLink()}?c=${S.invite.code}\nSe pedir, o código é ${S.invite.code} (vale até ${S.invite.ate}).` : '';
